@@ -1,0 +1,35 @@
+# macOS 文件系统元数据
+.DS_Store
+
+# 本地开发工具元数据
+/.workbuddy/
+
+# SwiftPM 构建产物与本地状态
+/.build/
+/.swiftpm/configuration/registries.json
+/.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+
+# Xcode 用户数据
+xcuserdata/
+
+# 打包与运行时产物
+/dist/
+/runtime/
+
+# 本地设计与实施草稿，仅保留目录占位文件
+/project-drafts/**
+!/project-drafts/.gitkeep
+
+# 本地环境与认证配置
+.netrc
+.env
+.env.*
+!.env.example
+
+# 签名凭据与描述文件
+*.p12
+*.pfx
+*.mobileprovision
+*.pem
+*.key
+*.p8

@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#F5F6F8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#16181D" media="(prefers-color-scheme: dark)">
+  <meta name="description" content="在同一局域网内查看 iOSSignKit 状态并为目标 App 续签安装。">
+  <title>iOSSignKit · 局域网控制</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cg fill='none' stroke='%230A84FF' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 12a9 9 0 0 0-15-6.7L3 8'/%3E%3Cpath d='M3 3v5h5'/%3E%3Cpath d='M3 12a9 9 0 0 0 15 6.7L21 16'/%3E%3Cpath d='M16 16h5v5'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- 内联 SVG 图标库：全部使用 currentColor 描边，随语义色渲染 -->
+  <svg class="svg-defs" width="0" height="0" aria-hidden="true" focusable="false">
+    <defs>
+      <!-- Renewal Loop 核心符号：共用同一圆周的双向刷新箭头 -->
+      <symbol id="i-loop" viewBox="0 0 24 24">
+        <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12a9 9 0 0 0-15-6.7L3 8"/>
+          <path d="M3 3v5h5"/>
+          <path d="M3 12a9 9 0 0 0 15 6.7L21 16"/>
+          <path d="M16 16h5v5"/>
+        </g>
+      </symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24">
+        <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="5" y="10.5" width="14" height="10" rx="2.8"/>
+          <path d="M8.5 10.5V7.7a3.5 3.5 0 0 1 7 0v2.8"/>
+        </g>
+      </symbol>
+      <symbol id="i-eye" viewBox="0 0 24 24">
+        <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2.8 12s3.4-6.2 9.2-6.2S21.2 12 21.2 12 17.8 18.2 12 18.2 2.8 12 2.8 12Z"/>
+          <circle cx="12" cy="12" r="2.8"/>
+        </g>
+      </symbol>
+      <symbol id="i-eye-off" viewBox="0 0 24 24">
+        <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2.8 12s3.4-6.2 9.2-6.2S21.2 12 21.2 12 17.8 18.2 12 18.2 2.8 12 2.8 12Z"/>
+          <circle cx="12" cy="12" r="2.8"/>
+          <path d="M4.5 4.5l15 15"/>
+        </g>
+      </symbol>
+      <symbol id="i-qr" viewBox="0 0 24 24">
+        <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3.5" y="3.5" width="6.5" height="6.5" rx="1.6"/>
+          <rect x="14" y="3.5" width="6.5" height="6.5" rx="1.6"/>
+          <rect x="3.5" y="14" width="6.5" height="6.5" rx="1.6"/>
+          <path d="M14 14h2.4v2.4H14zM20.5 14v2.4h-2.4M14 20.5v-2.4h2.4M17.6 17.6h2.9v2.9h-2.9z"/>
+        </g>
+      </symbol>
+      <symbol id="i-iphone" viewBox="0 0 24 24">
+        <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="7" y="2.5" width="10" height="19" rx="3"/>
+          <path d="M10.5 5.3h3"/>
+        </g>
+      </symbol>
+      <!-- 目标 App 的轻量占位图标 -->
+      <symbol id="i-shuttle" viewBox="0 0 24 24">
+        <g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M8.4 16.6a3.6 3.6 0 0 0 7.2 0"/>
+          <path d="M8.4 16.6 5.6 6.8M15.6 16.6l2.8-9.8M10.8 16.6 9.7 5.6M13.2 16.6l1.1-11M12 16.6V5"/>
+          <path d="M6.5 9.8h11"/>
+        </g>
+      </symbol>
+      <symbol id="i-check" viewBox="0 0 24 24">
+        <path d="M5 12.6l4.4 4.4L19 7.4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+      </symbol>
+      <symbol id="i-warn" viewBox="0 0 24 24">
+        <g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3.8 21.4 19.6a.8.8 0 0 1-.7 1.2H3.3a.8.8 0 0 1-.7-1.2Z"/>
+          <path d="M12 9.6v4.6"/>
+          <path d="M12 17.2v.01"/>
+        </g>
+      </symbol>
+    </defs>
+  </svg>
+
+  <div class="shell">
+    <header class="app-header" id="app-header" hidden>
+      <div class="brand">
+        <svg class="brand-mark" aria-hidden="true"><use href="#i-loop"/></svg>
+        <span class="brand-text">
+          <span class="brand-name">iOSSignKit</span>
+        </span>
+      </div>
+      <button class="text-button" id="exit-button" type="button">退出</button>
+    </header>
+
+    <main class="main" id="main">
+      <!-- ========== 登录页 ========== -->
+      <section class="view view-login" id="view-login" aria-labelledby="login-title" hidden>
+        <div class="hero hero-login">
+          <svg class="hero-mark hero-mark-lg accent" aria-hidden="true"><use href="#i-loop"/></svg>
+          <h1 class="state-title" id="login-title" tabindex="-1">iOSSignKit</h1>
+        </div>
+
+        <form class="login-form" id="login-form" novalidate>
+          <label class="visually-hidden" for="password-input">控制密码</label>
+          <div class="password-field" id="password-field">
+            <svg class="field-icon" aria-hidden="true"><use href="#i-lock"/></svg>
+            <input id="password-input" name="password" type="password"
+                   autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false"
+                   placeholder="输入 Mac App 中设置的控制密码" required>
+            <button class="icon-button" id="toggle-password" type="button" aria-label="显示密码" aria-pressed="false">
+              <svg aria-hidden="true"><use href="#i-eye" id="toggle-password-use"/></svg>
+            </button>
+          </div>
+          <p class="field-error" id="login-error" role="alert" hidden>
+            <svg aria-hidden="true"><use href="#i-warn"/></svg>
+            <span>密码不正确，请检查后重试。</span>
+          </p>
+          <button class="button button-primary" id="login-button" type="submit">进入控制页</button>
+        </form>
+
+        <div class="qr-note">
+          <svg class="qr-icon" aria-hidden="true"><use href="#i-qr"/></svg>
+            <p>扫描 Mac 上 iOSSignKit 生成的一次性二维码，可免输入密码进入本次会话。</p>
+        </div>
+      </section>
+
+      <!-- ========== 控制页 ========== -->
+      <section class="view view-control" id="view-control" aria-label="控制页" hidden>
+        <h1 class="visually-hidden" id="control-heading">iOSSignKit 局域网控制</h1>
+
+        <p class="notice" id="paired-notice" hidden>
+          <svg aria-hidden="true"><use href="#i-qr"/></svg>
+          <span>已通过一次性二维码进入，本次会话有效。</span>
+        </p>
+
+        <!-- 就绪态：签名已过期 -->
+        <div class="state" id="state-ready" hidden>
+          <div class="hero">
+            <svg class="hero-mark critical" aria-hidden="true"><use href="#i-loop"/></svg>
+            <h2 class="state-title" id="ready-title" tabindex="-1">签名状态</h2>
+            <p class="lede" id="ready-lede">正在读取目标 App 状态…</p>
+          </div>
+
+          <ul class="info-list">
+            <li class="info-row">
+              <span class="info-label">目标 App</span>
+              <span class="info-value" id="target-app"><svg class="value-icon" aria-hidden="true"><use href="#i-shuttle"/></svg><span>目标 App</span></span>
+            </li>
+            <li class="info-row">
+              <span class="info-label">目标设备</span>
+              <span class="info-value" id="target-device"><svg class="value-icon" aria-hidden="true"><use href="#i-iphone"/></svg><span>目标 iPhone</span></span>
+            </li>
+            <li class="info-row">
+              <span class="info-label">设备状态</span>
+              <span class="info-value status-neutral" id="device-status"><span class="dot" aria-hidden="true"></span><span>正在检查</span></span>
+            </li>
+            <li class="info-row">
+              <span class="info-label">签名状态</span>
+              <span class="info-value critical-text" id="expiry-value">正在检查</span>
+            </li>
+          </ul>
+
+          <div class="actions">
+            <button class="button button-primary" id="renew-button" type="button">立即续签并安装</button>
+            <button class="button button-secondary" id="recheck-button" type="button">重新检查</button>
+          </div>
+          <p class="caption">上次检查 <time id="last-checked">--:--</time> · 与 Mac 通过局域网连接</p>
+        </div>
+
+        <!-- 检查中 -->
+        <div class="state" id="state-checking" hidden>
+          <div class="hero hero-spacious">
+            <span class="spinner spinner-lg" role="img" aria-label="正在检查"></span>
+            <h2 class="state-title" id="checking-title" tabindex="-1">正在检查</h2>
+            <p class="lede">正在核对设备连接与签名状态…</p>
+          </div>
+        </div>
+
+        <!-- 进行中：六阶段进度 -->
+        <div class="state" id="state-progress" hidden>
+          <div class="hero">
+            <svg class="hero-mark accent loop-spin" aria-hidden="true"><use href="#i-loop"/></svg>
+            <h2 class="state-title" id="progress-title" tabindex="-1">正在续签</h2>
+            <p class="lede" id="progress-lede">正在续签并安装。请保持设备解锁，并与 Mac 处于同一局域网。</p>
+          </div>
+
+          <ol class="stage-list" id="stage-list"></ol>
+
+          <div class="progress-meta">
+            <span>已用时 <span class="mono" id="elapsed">00:00</span></span>
+            <span id="stage-count">第 1 阶段 · 共 6 阶段</span>
+          </div>
+          <p class="caption">状态每 5 秒自动更新</p>
+        </div>
+
+        <!-- 成功态 -->
+        <div class="state" id="state-success" hidden>
+          <div class="hero">
+            <span class="result-mark success" aria-hidden="true"><svg><use href="#i-check"/></svg></span>
+            <h2 class="state-title" id="success-title" tabindex="-1">续签完成</h2>
+            <p class="lede" id="success-lede">目标 App 已重新签名并安装到目标 iPhone。</p>
+          </div>
+
+          <ul class="info-list">
+            <li class="info-row">
+              <span class="info-label">新的有效期至</span>
+              <span class="info-value ok" id="success-expiry">正在读取</span>
+            </li>
+            <li class="info-row">
+              <span class="info-label">安装方式</span>
+              <span class="info-value">无线安装</span>
+            </li>
+            <li class="info-row">
+              <span class="info-label">本次用时</span>
+              <span class="info-value mono" id="success-elapsed">00:30</span>
+            </li>
+          </ul>
+
+          <div class="actions">
+            <button class="button button-primary" id="success-done" type="button">完成</button>
+          </div>
+        </div>
+
+        <!-- 失败态 -->
+        <div class="state" id="state-failure" hidden>
+          <div class="hero">
+            <span class="result-mark failure" aria-hidden="true"><svg><use href="#i-warn"/></svg></span>
+            <h2 class="state-title" id="failure-title" tabindex="-1">续签失败</h2>
+            <p class="lede" id="failure-lede">「签名并构建 App」阶段未能完成。</p>
+          </div>
+
+          <div class="failure-box">
+            <p class="failure-reason" id="failure-reason">签名并构建 App 时发生错误，可安全重试。完整构建日志请在 Mac 上的 iOSSignKit 中查看，此处不提供。</p>
+            <p class="failure-meta">失败阶段 <span id="failure-stage">签名并构建 App</span> · 已用时 <span class="mono" id="failure-elapsed">00:15</span></p>
+          </div>
+
+          <div class="actions">
+            <button class="button button-primary" id="retry-button" type="button">重试续签</button>
+            <button class="button button-secondary" id="failure-recheck" type="button">重新检查</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="app-footer">
+      <p class="footer-address mono" id="footer-address">局域网控制</p>
+      <p class="footer-note">仅限同一局域网访问</p>
+    </footer>
+  </div>
+
+  <div class="choice-overlay" id="profile-choice" hidden>
+    <section class="choice-sheet" id="profile-choice-sheet" role="dialog" aria-modal="true"
+             aria-labelledby="profile-choice-title" aria-describedby="profile-choice-message" tabindex="-1">
+      <div class="choice-handle" aria-hidden="true"></div>
+      <div class="choice-heading">
+        <svg class="choice-mark" aria-hidden="true"><use href="#i-loop"/></svg>
+        <div>
+          <p class="choice-eyebrow">本次续签方式</p>
+          <h2 id="profile-choice-title">选择签名策略</h2>
+        </div>
+      </div>
+      <p class="choice-message" id="profile-choice-message">
+        当前状态需要先选择如何处理签名描述文件。
+      </p>
+      <div class="choice-options">
+        <button class="choice-option choice-option-primary" id="profile-force" type="button">
+          <span class="choice-option-title">覆盖签名并续期</span>
+          <span class="choice-option-detail">更新签名描述文件，通常可获得新的个人签名有效期</span>
+        </button>
+        <button class="choice-option" id="profile-automatic" type="button">
+          <span class="choice-option-title">复用现有签名</span>
+          <span class="choice-option-detail">优先复用仍有效的描述文件，不保证延长到期时间</span>
+        </button>
+      </div>
+      <button class="button button-secondary choice-cancel" id="profile-cancel" type="button">取消</button>
+    </section>
+  </div>
+
+  <div class="visually-hidden" id="live-region" aria-live="polite" role="status"></div>
+
+  <noscript>
+    <p style="padding:24px;text-align:center">此页面需要启用 JavaScript 才能运行。</p>
+  </noscript>
+  <script src="app.js"></script>
+</body>
+</html>

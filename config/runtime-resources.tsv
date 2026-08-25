@@ -1,0 +1,8 @@
+# source-relative-path	role
+Resources/Icons/NotificationExpired.png	notification-attachment
+Resources/Icons/NotificationFailure.png	notification-attachment
+Resources/Icons/NotificationReminder.png	notification-attachment
+Resources/Icons/NotificationSuccess.png	notification-attachment
+Resources/LANControlWeb/index.html	runtime
+Resources/LANControlWeb/styles.css	runtime
+Resources/LANControlWeb/app.js	runtime
