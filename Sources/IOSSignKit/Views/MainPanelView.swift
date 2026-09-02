@@ -449,6 +449,14 @@ struct MainPanelView: View {
                 detail: viewModel.deviceScanDiagnosticSummary
             )
 
+            if let automaticRefreshAuthorizationSummary =
+                viewModel.automaticRefreshAuthorizationSummary {
+                KeyValueRowView(
+                    label: "自动续期判定",
+                    value: automaticRefreshAuthorizationSummary
+                )
+            }
+
             if shouldShowLastError {
                 KeyValueRowView(
                     label: "最近错误",

@@ -16,11 +16,35 @@ enum AutomaticRefreshEventKind: String, Codable, Equatable, Sendable {
     case notificationScheduled
     case notificationDenied
     case notificationFailed
+    case authorizationProceeded
+    case authorizationDeferred
+    case authorizationBlocked
+}
+
+enum AutomaticRefreshEventReason: String, Codable, Equatable, Sendable {
+    case freshVerifiedAppOnExactDevice
+    case passiveObservation
+    case cachedActionEvidence
+    case installationEvidenceUnavailable
+    case degradedDeviceEvidence
+    case criticalActionsDisabled
+    case deviceEvidenceConflict
 }
 
 struct AutomaticRefreshEvent: Codable, Equatable, Sendable {
     let kind: AutomaticRefreshEventKind
     let occurredAt: Date
+    let reason: AutomaticRefreshEventReason?
+
+    init(
+        kind: AutomaticRefreshEventKind,
+        occurredAt: Date,
+        reason: AutomaticRefreshEventReason? = nil
+    ) {
+        self.kind = kind
+        self.occurredAt = occurredAt
+        self.reason = reason
+    }
 }
 
 struct AppState: Codable, Equatable {
@@ -66,11 +90,16 @@ struct AppState: Codable, Equatable {
 
     mutating func appendAutomaticRefreshEvent(
         _ kind: AutomaticRefreshEventKind,
+        reason: AutomaticRefreshEventReason? = nil,
         occurredAt: Date = Date(),
         limit: Int = 50
     ) {
         automaticRefreshEvents.append(
-            AutomaticRefreshEvent(kind: kind, occurredAt: occurredAt)
+            AutomaticRefreshEvent(
+                kind: kind,
+                occurredAt: occurredAt,
+                reason: reason
+            )
         )
         let normalizedLimit = max(limit, 1)
         if automaticRefreshEvents.count > normalizedLimit {

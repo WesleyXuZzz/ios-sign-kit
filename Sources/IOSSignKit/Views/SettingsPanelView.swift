@@ -1021,6 +1021,7 @@ struct SettingsPanelView: View {
             "环境：\(viewModel.environmentStatus.summary)",
             "设备检测来源：\(viewModel.deviceScanSourceSummary)",
             "设备诊断：\(viewModel.deviceScanDiagnosticSummary ?? "无")",
+            "自动续期判定：\(viewModel.automaticRefreshAuthorizationSummary ?? "无")",
             "最近错误：\(viewModel.lastErrorSummary)"
         ]
         NSPasteboard.general.clearContents()

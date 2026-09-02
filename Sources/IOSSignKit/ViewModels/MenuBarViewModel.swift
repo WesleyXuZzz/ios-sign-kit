@@ -657,6 +657,42 @@ final class MenuBarViewModel: ObservableObject {
         return source == "失败" ? "未提供诊断信息" : "未发现异常"
     }
 
+    var automaticRefreshAuthorizationSummary: String? {
+        guard let event = state.automaticRefreshEvents.reversed().first(
+            where: {
+                $0.kind == .authorizationProceeded
+                    || $0.kind == .authorizationDeferred
+                    || $0.kind == .authorizationBlocked
+            }
+        ) else {
+            return nil
+        }
+        switch (event.kind, event.reason) {
+        case (
+            .authorizationProceeded,
+            .freshVerifiedAppOnExactDevice
+        ):
+            return "已允许：固定设备与过期 App 已在同轮核验"
+        case (.authorizationDeferred, .passiveObservation):
+            return "已延后：本轮仅用于状态观察"
+        case (.authorizationDeferred, .cachedActionEvidence):
+            return "已延后：关键动作需要新鲜证据"
+        case (
+            .authorizationDeferred,
+            .installationEvidenceUnavailable
+        ):
+            return "已延后：App 安装或有效期证据不可用"
+        case (.authorizationDeferred, .degradedDeviceEvidence):
+            return "已延后：设备证据不完整"
+        case (.authorizationBlocked, .criticalActionsDisabled):
+            return "已阻止：当前检测策略不允许关键动作"
+        case (.authorizationBlocked, .deviceEvidenceConflict):
+            return "已阻止：设备来源结论冲突"
+        default:
+            return nil
+        }
+    }
+
     var expiryStatusTone: StatusTone {
         guard let estimatedExpiryAt = expiryInfo?.estimatedExpiryAt else {
             return .warning
@@ -2684,13 +2720,18 @@ final class MenuBarViewModel: ObservableObject {
     }
 
     private func recordAutomaticRefreshEvent(
-        _ kind: AutomaticRefreshEventKind
+        _ kind: AutomaticRefreshEventKind,
+        reason: AutomaticRefreshEventReason? = nil
     ) {
         var updatedState = state
-        guard appendAutomaticRefreshEvent(kind, to: &updatedState) else {
+        guard appendAutomaticRefreshEvent(
+            kind,
+            reason: reason,
+            to: &updatedState
+        ) else {
             return
         }
-        defer { logAutomaticRefreshEvent(kind) }
+        defer { logAutomaticRefreshEvent(kind, reason: reason) }
         do {
             try stateStore.saveState(updatedState)
             state = updatedState
@@ -2703,21 +2744,78 @@ final class MenuBarViewModel: ObservableObject {
     @discardableResult
     private func appendAutomaticRefreshEvent(
         _ kind: AutomaticRefreshEventKind,
+        reason: AutomaticRefreshEventReason? = nil,
         to state: inout AppState
     ) -> Bool {
-        guard state.automaticRefreshEvents.last?.kind != kind else {
+        guard state.automaticRefreshEvents.last?.kind != kind
+                || state.automaticRefreshEvents.last?.reason != reason else {
             return false
         }
-        state.appendAutomaticRefreshEvent(kind)
+        state.appendAutomaticRefreshEvent(kind, reason: reason)
         return true
     }
 
     private func logAutomaticRefreshEvent(
-        _ kind: AutomaticRefreshEventKind
+        _ kind: AutomaticRefreshEventKind,
+        reason: AutomaticRefreshEventReason? = nil
     ) {
+        let reasonValue = reason?.rawValue ?? "none"
         Self.automaticRefreshLogger.info(
-            "automatic refresh event: \(kind.rawValue, privacy: .public)"
+            "automatic refresh event: \(kind.rawValue, privacy: .public), reason: \(reasonValue, privacy: .public)"
         )
+    }
+
+    private func recordAutomaticRefreshAuthorizationIfNeeded(
+        _ disposition: AutomaticRefreshAuthorizer.Disposition
+    ) {
+        guard isAutomaticRefreshConditionMet else {
+            return
+        }
+        switch disposition {
+        case .proceed(.completeObservation):
+            return
+        case .proceed(.freshVerifiedAppOnExactDevice):
+            recordAutomaticRefreshEvent(
+                .authorizationProceeded,
+                reason: .freshVerifiedAppOnExactDevice
+            )
+        case .defer(let reason):
+            recordAutomaticRefreshEvent(
+                .authorizationDeferred,
+                reason: automaticRefreshEventReason(for: reason)
+            )
+        case .block(let reason):
+            recordAutomaticRefreshEvent(
+                .authorizationBlocked,
+                reason: automaticRefreshEventReason(for: reason)
+            )
+        }
+    }
+
+    private func automaticRefreshEventReason(
+        for reason: AutomaticRefreshAuthorizer.DeferralReason
+    ) -> AutomaticRefreshEventReason {
+        switch reason {
+        case .passiveObservation:
+            return .passiveObservation
+        case .cachedActionEvidence:
+            return .cachedActionEvidence
+        case .installationEvidenceUnavailable:
+            return .installationEvidenceUnavailable
+        case .degradedDeviceEvidence:
+            return .degradedDeviceEvidence
+        }
+    }
+
+    private func automaticRefreshEventReason(
+        for reason: AutomaticRefreshAuthorizer.BlockReason
+    ) -> AutomaticRefreshEventReason {
+        switch reason {
+        case .criticalActionsDisabled:
+            return .criticalActionsDisabled
+        case .deviceEvidenceConflict:
+            return .deviceEvidenceConflict
+        }
     }
 
     private func stopDeployPreflight(
@@ -5200,12 +5298,19 @@ final class MenuBarViewModel: ObservableObject {
 
         updateStateFromMatch(
             recordPrompt: !shouldSuppressRefreshActions,
-            attemptAutomaticRefresh: !shouldSuppressRefreshActions,
+            attemptAutomaticRefresh: false,
             connectionStatus: connectionStatus,
             scanResult: snapshot.scanResult,
             observationDiagnostics:
                 snapshot.targetObservation?.diagnostics
         )
+        recordAutomaticRefreshAuthorizationIfNeeded(
+            reduction.automaticRefreshDisposition
+        )
+        if reduction.automaticRefreshDisposition
+            .allowsAutomaticRefreshEvaluation {
+            attemptAutomaticRefreshIfNeeded()
+        }
 
         switch connectionResolution {
         case .online:

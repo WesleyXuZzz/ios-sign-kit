@@ -620,7 +620,7 @@ struct MenuBarViewModelDeviceDetectionSafetyTests {
     }
 
     @Test
-    func degradedMatchedObservationPublishesOnlineStateButSuppressesCriticalActions()
+    func degradedMatchedObservationWithFreshExpiredAppStartsAutomaticCountdown()
         async throws
     {
         let fixture = try DeviceDetectionSafetyFixture(
@@ -644,8 +644,20 @@ struct MenuBarViewModelDeviceDetectionSafetyTests {
         #expect(fixture.notificationRecorder.notifications.isEmpty)
         #expect(fixture.actionRecorder.pairCount == 0)
         #expect(fixture.actionRecorder.deployCount == 0)
-        #expect(fixture.viewModel.pendingAutoRefreshCountdown == nil)
+        #expect(fixture.viewModel.pendingAutoRefreshCountdown != nil)
         #expect(fixture.viewModel.state.lastAutomaticAttemptAt == nil)
+        let authorizationEvent = fixture.viewModel.state
+            .automaticRefreshEvents.first(where: {
+                $0.kind == .authorizationProceeded
+            })
+        #expect(
+            authorizationEvent?.reason
+                == .freshVerifiedAppOnExactDevice
+        )
+        #expect(
+            fixture.viewModel.automaticRefreshAuthorizationSummary
+                == "已允许：固定设备与过期 App 已在同轮核验"
+        )
         await fixture.shutdown()
     }
 

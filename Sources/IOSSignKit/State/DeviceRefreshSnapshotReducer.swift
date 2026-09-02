@@ -33,6 +33,8 @@ struct DeviceRefreshSnapshotReducer {
         let expiryInfo: ExpiryInfo?
         let shouldResetInstalledAppRetry: Bool
         let shouldSuppressRefreshActions: Bool
+        let automaticRefreshDisposition:
+            AutomaticRefreshAuthorizer.Disposition
         let cacheIssue: DeviceScanCacheIssue?
         let setupMessage: String?
     }
@@ -96,6 +98,41 @@ struct DeviceRefreshSnapshotReducer {
                                 != nil
                     )
             )
+        let hasExactStableTargetMatch = normalized(
+            input.config.preferredDeviceID
+        ) == normalized(snapshot.matchedDevice?.id)
+        let hasFreshVerifiedInstalledApp: Bool
+        if case .found(let appInfo) =
+            snapshot.installedAppInspectionOutcome {
+            hasFreshVerifiedInstalledApp =
+                installation.reduction.expiryEvidenceVerified
+                && installation.expiryInfo?.estimatedExpiryAt != nil
+                && normalized(appInfo.bundleIdentifier)
+                    == normalized(input.config.bundleID)
+                && hasExactStableTargetMatch
+        } else {
+            hasFreshVerifiedInstalledApp = false
+        }
+        let automaticRefreshDisposition =
+            AutomaticRefreshAuthorizer().evaluate(
+                .init(
+                    externallySuppressesActions:
+                        input.externallySuppressesActions,
+                    allowsCriticalActions:
+                        snapshot.allowsCriticalActions,
+                    usedCachedActionEvidence:
+                        snapshot.usedCachedActionEvidence,
+                    hasAvailabilityConflict: hasAvailabilityConflict,
+                    hasDegradedTargetObservation:
+                        hasDegradedTargetObservation,
+                    hasInstallationBlocker:
+                        shouldSuppressForInstallation,
+                    hasExactStableTargetMatch:
+                        hasExactStableTargetMatch,
+                    hasFreshVerifiedInstalledApp:
+                        hasFreshVerifiedInstalledApp
+                )
+            )
 
         let cacheIssue: DeviceScanCacheIssue?
         if hasAvailabilityConflict {
@@ -143,9 +180,21 @@ struct DeviceRefreshSnapshotReducer {
                     || snapshot.usedCachedActionEvidence
                     || hasDegradedTargetObservation
                     || shouldSuppressForInstallation,
+            automaticRefreshDisposition:
+                automaticRefreshDisposition,
             cacheIssue: cacheIssue,
             setupMessage: setupMessage
         )
+    }
+
+    private func normalized(_ value: String?) -> String? {
+        guard let value else {
+            return nil
+        }
+        let normalized = value.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        return normalized.isEmpty ? nil : normalized
     }
 
     private func reduceConnection(

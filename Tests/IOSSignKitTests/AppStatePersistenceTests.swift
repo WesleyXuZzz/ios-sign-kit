@@ -23,14 +23,15 @@ struct AppStatePersistenceTests {
     }
 
     @Test
-    func persistsAutomaticRecoveryFailureBackoffAndSettlementEvent()
+    func persistsAutomaticRecoveryFailureBackoffAndAuthorizationReason()
         throws
     {
         let failureAt = Date(timeIntervalSince1970: 1_750_000_000)
         var state = AppState.default
         state.lastAutomaticRecoveryFailureAt = failureAt
         state.appendAutomaticRefreshEvent(
-            .settled,
+            .authorizationProceeded,
+            reason: .freshVerifiedAppOnExactDevice,
             occurredAt: failureAt
         )
 
@@ -41,7 +42,14 @@ struct AppStatePersistenceTests {
         )
 
         #expect(decoded.lastAutomaticRecoveryFailureAt == failureAt)
-        #expect(decoded.automaticRefreshEvents.last?.kind == .settled)
+        #expect(
+            decoded.automaticRefreshEvents.last?.kind
+                == .authorizationProceeded
+        )
+        #expect(
+            decoded.automaticRefreshEvents.last?.reason
+                == .freshVerifiedAppOnExactDevice
+        )
     }
 
     @Test
