@@ -2,7 +2,7 @@
   "appDisplayName": "iOSSignKit",
   "executableName": "IOSSignKit",
   "bundleIdentifier": "com.xuzw.iossignkit",
-  "marketingVersion": "1.0.0",
-  "buildVersion": "2",
+  "marketingVersion": "1.1.0",
+  "buildVersion": "6",
   "minimumMacOSVersion": "14.0"
 }
