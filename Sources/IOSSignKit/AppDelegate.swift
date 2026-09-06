@@ -6,6 +6,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var viewModel: MenuBarViewModel?
     private var statusBarController: StatusBarController?
     private var systemWakeMonitor: SystemWakeMonitor?
+#if DEBUG
+    private var visualQAOutputTask: Task<Void, Never>?
+#endif
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         do {
@@ -22,6 +25,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             do {
                 let viewModel = try VisualQAScenario.makeViewModel()
                 self.viewModel = viewModel
+                if VisualQAScenario.phase == .deploying {
+                    visualQAOutputTask = Task { @MainActor [weak viewModel] in
+                        for sequence in 1...300 {
+                            do { try await Task.sleep(for: .seconds(1)) } catch { return }
+                            guard let viewModel else { return }
+                            VisualQAScenario.appendMockOutput(to: viewModel, sequence: sequence)
+                        }
+                    }
+                }
                 NSApp.setActivationPolicy(.accessory)
                 NSApp.appearance = NSAppearance(
                     named: VisualQAScenario.usesDarkAppearance
@@ -95,6 +107,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+#if DEBUG
+        visualQAOutputTask?.cancel()
+        visualQAOutputTask = nil
+#endif
         systemWakeMonitor?.stop()
         systemWakeMonitor = nil
         viewModel?.prepareForTermination()

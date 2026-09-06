@@ -6,6 +6,10 @@ enum VisualQAScenarioError: Error {
     case externalOperationDisabled
 }
 
+enum VisualQAPhase: String, CaseIterable {
+    case offline, ready, deploying, success, failure, cancelled, countdown
+}
+
 enum VisualQAPage: String {
     case statusOffline = "status-offline"
     case settingsDevice = "settings-device"
@@ -47,10 +51,15 @@ enum VisualQAScenario {
         ) ?? .statusOffline
     }
 
-    static func makeViewModel(now: Date = Date()) throws -> MenuBarViewModel {
+    static var phase: VisualQAPhase {
+        VisualQAPhase(rawValue: ProcessInfo.processInfo.environment["IOS_SIGN_KIT_VISUAL_QA_PHASE"] ?? "") ?? .offline
+    }
+
+    static func makeViewModel(now: Date = Date(), phase selectedPhase: VisualQAPhase? = nil) throws -> MenuBarViewModel {
+        let selectedPhase = selectedPhase ?? phase
         let qaDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(
-                "ios-sign-kit-visual-qa-\(ProcessInfo.processInfo.processIdentifier)",
+                "ios-sign-kit-visual-qa-\(UUID().uuidString)",
                 isDirectory: true
             )
         let projectDirectory = qaDirectory
@@ -159,6 +168,7 @@ enum VisualQAScenario {
                 .failed("视觉验证模式已禁用设备配对。")
             },
             notificationService: VisualQANotificationService(),
+            historyService: RefreshHistoryService(logStore: LogStore(logsDirectoryURL: qaDirectory.appendingPathComponent("Logs"))),
             launchAtLoginService: LaunchAtLoginService(
                 sync: { _ in },
                 currentStatus: { false }
@@ -224,8 +234,58 @@ enum VisualQAScenario {
         if page != .statusOffline {
             viewModel.setupViewModel.reminderCooldownHours = 12
         }
+        if selectedPhase != .offline {
+            apply(selectedPhase, to: viewModel, now: now)
+            let currentLogURL = qaDirectory.appendingPathComponent("mock-current.log")
+            try viewModel.deployLogText.write(to: currentLogURL, atomically: true, encoding: .utf8)
+            viewModel.state.lastLogPath = currentLogURL.path
+            let outcomes: [RefreshHistoryOutcome] = [.success, .failure, .cancelled, .success]
+            viewModel.historyEntries = try outcomes.enumerated().map { index, outcome in
+                let logURL = qaDirectory.appendingPathComponent("mock-history-\(index).log")
+                let excerpt = "[MOCK] ExampleApp / 示例 iPhone — \(outcome)\n[MOCK] 未运行外部构建、签名或安装命令。"
+                try excerpt.write(to: logURL, atomically: true, encoding: .utf8)
+                return RefreshHistoryEntry(
+                    id: logURL.path, startedAt: now.addingTimeInterval(Double(-index - 1) * 3600),
+                    outcome: outcome, trigger: index.isMultiple(of: 2) ? .manual : .automatic,
+                    summary: outcome == .success ? "ExampleApp 续签成功" : outcome == .failure ? "ExampleApp 续签失败" : "ExampleApp 已取消",
+                    detailSummary: "模拟验收记录：未操作真实设备。",
+                    logExcerpt: excerpt, logPath: logURL.path, rawFilename: logURL.lastPathComponent)
+            }
+        }
         return viewModel
     }
+    static func apply(_ phase: VisualQAPhase, to viewModel: MenuBarViewModel, now: Date) {
+        guard let deviceID = viewModel.config.preferredDeviceID else { return }
+        let device = DeviceInfo(id: deviceID, name: "示例 iPhone 14 Pro Max",
+            platform: "com.apple.platform.iphoneos", osVersion: "27.0", isAvailable: true, isPaired: true)
+        viewModel.availableDevices = [device]
+        viewModel.matchedDevice = device
+        viewModel.state.currentDeviceStatus = .online
+        viewModel.state.lastDeviceSeenAt = now
+        viewModel.state.lastExpiryVerifiedAt = now
+        viewModel.state.lastAppInspectionAt = now
+        viewModel.state.lastAttemptAt = now.addingTimeInterval(-30)
+        viewModel.state.lastErrorSummary = nil
+        viewModel.state.isDeployRunning = phase == .deploying
+        viewModel.state.lastResult = phase == .deploying ? .running : phase == .failure ? .failure : phase == .cancelled ? .cancelled : .success
+        viewModel.setupViewModel.syncDetectedDevices(devices: [device], matchedDevice: device, feedback: .clear)
+        viewModel.deployLogText = (1...36).map { "[MOCK] 检查步骤 \($0)：ExampleApp，未执行外部命令。" }.joined(separator: "\n")
+        viewModel.deployProgressText = phase == .deploying ? "模拟构建与安装输出 · 不连接真实设备" : nil
+        viewModel.pendingAutoRefreshCountdown = phase == .countdown ? 5 : nil
+        let message: String? = switch phase {
+        case .success: "模拟续签成功，已验证界面反馈；未操作真实设备。"
+        case .failure: "模拟构建失败：用于验收长错误说明、重试入口与日志查看；没有执行真实构建或安装。"
+        case .cancelled: "已取消模拟续签，未操作真实设备。"
+        default: nil
+        }
+        viewModel.configureVisualQAFeedback(message, result: message == nil ? nil : viewModel.state.lastResult)
+    }
+
+    static func appendMockOutput(to viewModel: MenuBarViewModel, sequence: Int) {
+        guard viewModel.state.isDeployRunning else { return }
+        viewModel.deployLogText += "\n[MOCK] 实时输出 \(sequence)：模拟进度更新，不调用 xcodebuild 或 devicectl。"
+    }
+
 }
 
 @MainActor

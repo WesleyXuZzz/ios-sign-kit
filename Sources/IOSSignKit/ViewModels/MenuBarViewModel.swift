@@ -1509,6 +1509,11 @@ final class MenuBarViewModel: ObservableObject {
     }
 
 #if DEBUG
+    func configureVisualQAFeedback(_ message: String?, result: RefreshResult?) {
+        hasConfirmedTargetDeviceThisSession = true
+        publishOperationFeedback(message, result: result)
+    }
+
     func freezeVisualQAClock(at date: Date) {
         remainingExpiryTimer?.invalidate()
         remainingExpiryTimer = nil
