@@ -129,9 +129,9 @@ open Package.swift
 
 `Package.swift` 用 Xcode 打开后可以直接运行 `IOSSignKit`。
 
-### 项目草稿工作区
+### 本地开发工作台
 
-开发方案、设计稿及其配套素材统一保存在根目录 `project-drafts/` 中。每项工作可按主题新建独立子目录和文件，便于在实现前讨论和迭代。
+根目录 `workbench/` 是本地开发工作台，用于存放开发方案、设计稿、实验原型及配套素材。每项工作可按主题新建独立子目录和文件，便于在实现前讨论和迭代。
 
 除用于保留目录的 `.gitkeep` 外，该目录内容均被 Git 忽略，且不作为项目长期事实源。需要长期保留的结论应在确认后归并到代码、测试、`AGENTS.md`、`README.md` 或现有的 `docs/architecture.md`、`docs/ui-guidelines.md` 中，不应强制提交原始工作稿。
 

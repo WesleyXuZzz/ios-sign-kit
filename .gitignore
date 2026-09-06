@@ -16,9 +16,9 @@ xcuserdata/
 /dist/
 /runtime/
 
-# 本地设计与实施草稿，仅保留目录占位文件
-/project-drafts/**
-!/project-drafts/.gitkeep
+# 本地开发工作台，仅保留目录占位文件
+/workbench/**
+!/workbench/.gitkeep
 
 # 本地环境与认证配置
 .netrc
