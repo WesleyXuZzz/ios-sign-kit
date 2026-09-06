@@ -213,6 +213,7 @@ struct HeroCountdownCard: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var heroClock = RenewalRingMotionClock()
     @State private var successFeedbackDidSettle = false
+    @State private var isBlockReasonPresented = false
     @State private var waterResultTransition:
         HeroRenewalRingResultTransition?
 
@@ -229,8 +230,7 @@ struct HeroCountdownCard: View {
                     Text(statusDetail)
                         .font(TypeTokens.caption)
                         .foregroundStyle(ColorTokens.Text.secondary)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.82)
+                        .lineLimit(nil)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(
                             .top,
@@ -247,6 +247,7 @@ struct HeroCountdownCard: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(minHeight: 176)
 
             Rectangle()
                 .fill(ColorTokens.Border.subtle)
@@ -258,24 +259,13 @@ struct HeroCountdownCard: View {
         .padding(.horizontal, SpacingTokens.lg)
         .padding(.vertical, SpacingTokens.HeroCard.verticalPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(
-                cornerRadius: SpacingTokens.Radius.card,
-                style: .continuous
-            )
-            .fill(ColorTokens.BG.surfaceEmphasis)
-        )
-        .overlay(
-            RoundedRectangle(
-                cornerRadius: SpacingTokens.Radius.card,
-                style: .continuous
-            )
-            .strokeBorder(
-                ColorTokens.Border.subtle,
-                lineWidth: SpacingTokens.Hairline.width
-            )
-        )
+        .interfaceSurface(emphasized: true)
         .accessibilityElement(children: .contain)
+        .alert("为什么续签被阻止？", isPresented: $isBlockReasonPresented) {
+            Button("知道了", role: .cancel) {}
+        } message: {
+            Text(presentation.currentTask?.detail ?? presentation.header.detail)
+        }
         .onAppear {
             resetHeroClock()
         }
@@ -473,13 +463,13 @@ struct HeroCountdownCard: View {
                 Text(presentation.targetDevice.value)
                     .font(TypeTokens.cardTitle)
                     .foregroundStyle(ColorTokens.Text.primary)
-                    .lineLimit(1)
+                    .lineLimit(2)
                     .truncationMode(.tail)
 
                 Text(deviceDetail)
                     .font(TypeTokens.caption)
                     .foregroundStyle(ColorTokens.Text.secondary)
-                    .lineLimit(1)
+                    .lineLimit(2)
                     .truncationMode(.tail)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -514,9 +504,9 @@ struct HeroCountdownCard: View {
             )
             .help("打开设置并完成项目配置")
         } else if presentation.phase == .blocked {
-            HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 Button {
-                    onOpenSettings()
+                    isBlockReasonPresented = true
                 } label: {
                     Label("查看原因", systemImage: "info.circle")
                 }
@@ -538,7 +528,7 @@ struct HeroCountdownCard: View {
         } else if presentation.phase == .attention,
                   presentation.header.tone == .critical
         {
-            HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 Button {
                     onOpenSettings()
                 } label: {
@@ -554,7 +544,7 @@ struct HeroCountdownCard: View {
                 actionButton(for: firstAction(withID: .recheck))
             }
         } else {
-            HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 ForEach(displayedActions) { action in
                     actionButton(for: action)
                 }
@@ -972,39 +962,22 @@ struct EnvironmentTrackRow: View {
     let onFix: (PrimaryJourneyVerificationStep.ID) -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
                 node(step)
                     .frame(maxWidth: .infinity, alignment: .leading)
-
+                    .padding(16)
                 if index < steps.count - 1 {
                     Rectangle()
                         .fill(ColorTokens.Border.subtle)
-                        .frame(width: Self.separatorWidth)
-                        .frame(maxHeight: .infinity)
+                        .frame(height: Self.separatorWidth)
                         .padding(.horizontal, Self.separatorHorizontalPadding)
-                        .padding(.vertical, 2)
                         .accessibilityHidden(true)
                 }
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(
-                cornerRadius: SpacingTokens.Radius.card,
-                style: .continuous
-            )
-            .fill(ColorTokens.BG.surface)
-        )
-        .overlay(
-            RoundedRectangle(
-                cornerRadius: SpacingTokens.Radius.card,
-                style: .continuous
-            )
-            .strokeBorder(ColorTokens.Border.subtle, lineWidth: 1)
-        )
+        .interfaceSurface()
     }
 
     private func node(_ step: PrimaryJourneyVerificationStep) -> some View {
@@ -1108,22 +1081,7 @@ struct ActivityFocusCard: View {
     var body: some View {
         Group {
             if let task = activeTask {
-                VStack(alignment: .leading, spacing: SpacingTokens.sm) {
-                    taskCard(task)
-
-                    if Self.showsLiveOutput(for: task) {
-                        LiveDeployOutputPanel(
-                            logText: deployLogText,
-                            onExpand: {
-                                if let action = Self.liveOutputAction(
-                                    for: task
-                                ) {
-                                    onAction(action)
-                                }
-                            }
-                        )
-                    }
-                }
+                taskCard(task)
             } else if let result = presentation.previousResult {
                 resultCard(result)
             } else {
@@ -1149,27 +1107,21 @@ struct ActivityFocusCard: View {
     }
 
     static func taskCardActions(
-        _ actions: [PrimaryJourneyAction]
+        _ actions: [PrimaryJourneyAction],
+        showsLiveOutput: Bool = true
     ) -> [PrimaryJourneyAction] {
-        actions.filter { $0.id == .cancelRefresh }
+        actions.filter { !showsLiveOutput || $0.id != .showDeployLog }
     }
 
     private var activeTask: PrimaryJourneyTask? {
-        guard let task = presentation.currentTask else { return nil }
-        switch task.kind {
-        case .processRecoveryBlocked, .checking, .countdown,
-             .recovering, .deploying:
-            return task
-        case .currentFeedback:
-            return nil
-        }
+        presentation.currentTask
     }
 
     private func taskCard(_ task: PrimaryJourneyTask) -> some View {
         TimelineView(
             .animation(
                 minimumInterval: 1,
-                paused: !isAnimationActive
+                paused: !isAnimationActive || task.kind == .currentFeedback
             )
         ) { context in
             VStack(alignment: .leading, spacing: 12) {
@@ -1184,16 +1136,28 @@ struct ActivityFocusCard: View {
                         Text(stageTitle(for: task))
                             .font(TypeTokens.cardTitle)
                             .foregroundStyle(ColorTokens.Text.primary)
-                            .lineLimit(1)
+                            .fixedSize(horizontal: false, vertical: true)
 
-                        Text(elapsedText(at: context.date))
-                            .font(TypeTokens.mono)
-                            .foregroundStyle(ColorTokens.Text.secondary)
+                        if task.kind != .currentFeedback {
+                            Text(elapsedText(at: context.date))
+                                .font(TypeTokens.mono)
+                                .foregroundStyle(ColorTokens.Text.secondary)
+                        }
                     }
 
                     Spacer(minLength: 12)
+                }
 
-                    actionButtons(task.actions)
+                if !task.detail.isEmpty && task.detail != stageTitle(for: task) {
+                    Text(task.detail)
+                        .font(TypeTokens.caption)
+                        .foregroundStyle(ColorTokens.Text.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if !Self.taskCardActions(
+                    task.actions, showsLiveOutput: Self.showsLiveOutput(for: task)
+                ).isEmpty {
+                    actionButtons(task)
                 }
 
                 if let progress = task.progress {
@@ -1203,8 +1167,7 @@ struct ActivityFocusCard: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(cardBackground)
-            .overlay(cardBorder)
+            .interfaceSurface()
             .accessibilityElement(children: .contain)
         }
     }
@@ -1277,8 +1240,7 @@ struct ActivityFocusCard: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(cardBackground)
-        .overlay(cardBorder)
+        .interfaceSurface()
         .accessibilityElement(children: .contain)
     }
 
@@ -1307,8 +1269,7 @@ struct ActivityFocusCard: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(cardBackground)
-        .overlay(cardBorder)
+        .interfaceSurface()
     }
 
     @ViewBuilder
@@ -1345,10 +1306,12 @@ struct ActivityFocusCard: View {
 
     @ViewBuilder
     private func actionButtons(
-        _ actions: [PrimaryJourneyAction]
+        _ task: PrimaryJourneyTask
     ) -> some View {
-        HStack(spacing: 8) {
-            ForEach(Self.taskCardActions(actions)) { action in
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(
+                Self.taskCardActions(task.actions, showsLiveOutput: Self.showsLiveOutput(for: task))
+            ) { action in
                 Button {
                     onAction(action)
                 } label: {
@@ -1356,24 +1319,13 @@ struct ActivityFocusCard: View {
                 }
                 .buttonStyle(
                     RenewalButtonStyle(
-                        kind: action.style == .destructive ? .destructive : .text
+                        kind: action.style == .destructive
+                            ? .destructive : action.style == .primary ? .primary : .text
                     )
                 )
                 .disabled(!action.isEnabled)
             }
         }
-    }
-
-    private var cardBackground: some ShapeStyle {
-        ColorTokens.BG.surface
-    }
-
-    private var cardBorder: some View {
-        RoundedRectangle(
-            cornerRadius: SpacingTokens.Radius.card,
-            style: .continuous
-        )
-        .strokeBorder(ColorTokens.Border.subtle, lineWidth: 1)
     }
 
     private func resultTone(

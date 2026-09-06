@@ -17,7 +17,8 @@ final class MainPanelVisibilityState: ObservableObject {
 struct MainPanelView: View {
     enum Layout {
         static let minimumWindowWidth: CGFloat = 860
-        static let sidebarWidth: CGFloat = 200
+        static let commandBarHeight: CGFloat = 56
+        static let brandIconSize: CGFloat = 30
     }
 
     @ObservedObject var viewModel: MenuBarViewModel
@@ -25,6 +26,12 @@ struct MainPanelView: View {
     @State private var navigationState = NavigationState()
     @State private var isDiagnosticsPresented = false
     @State private var isDeployLogPresented = false
+    @State private var selectedHistoryID: String?
+    @AppStorage(InterfaceStyle.preferenceKey) private var storedInterfaceStyle = InterfaceStyle
+        .native.rawValue
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @FocusState private var focusedEntry: PanelTab?
+    @FocusState private var historyEntryFocused: Bool
     private let settingsInitialScrollAnchor: UnitPoint
     private let applicationVersionPresentation =
         ApplicationVersionPresentation.current
@@ -91,15 +98,6 @@ struct MainPanelView: View {
         }
     }
 
-    enum SidebarTabIconStyle {
-        static let slotSize: CGFloat = 20
-    }
-
-    enum SidebarBrandIconStyle {
-        static let size = SidebarBrandIcon.Layout.defaultSize
-        static let reservedHeight: CGFloat = 140
-    }
-
     struct NavigationState: Equatable {
         var selectedTab: PanelTab
         var settingsCategory: SettingsPanelCategory
@@ -118,6 +116,10 @@ struct MainPanelView: View {
             settingsCategory = category
             selectedTab = .settings
         }
+
+        mutating func closeContentPage() {
+            selectedTab = .status
+        }
     }
 
     private var selectedTab: PanelTab {
@@ -130,45 +132,39 @@ struct MainPanelView: View {
         nonmutating set { navigationState.settingsCategory = newValue }
     }
 
+    private var interfaceStyle: InterfaceStyle {
+        InterfaceStyle(storedValue: storedInterfaceStyle)
+    }
+
     var body: some View {
-        HStack(spacing: 0) {
-            sidebar
-
-            Rectangle()
-                .fill(ColorTokens.Border.subtle)
-                .frame(width: 1)
-                .accessibilityHidden(true)
-
-            ZStack(alignment: .topLeading) {
-                selectedTabContent
-                    .id(selectedTab)
-                    .transition(
-                        .asymmetric(
-                            insertion: .move(edge: .trailing).combined(with: .opacity),
-                            removal: .opacity
-                        )
-                    )
+        ZStack(alignment: .topLeading) {
+            InterfaceCanvas()
+            VStack(spacing: 0) {
+                commandBar
+                statusPage
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .animation(MotionTokens.easeOut(), value: selectedTab)
+            .opacity(selectedTab == .status ? 1 : 0)
+            .disabled(selectedTab != .status)
+            .accessibilityHidden(selectedTab != .status)
+
+            if selectedTab != .status {
+                selectedTabContent
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background { InterfaceCanvas() }
+                    .transition(.opacity)
+                    .zIndex(1)
+            }
         }
-        .background(ColorTokens.BG.canvas.ignoresSafeArea())
-        .frame(
-            minWidth: Layout.minimumWindowWidth,
-            maxHeight: .infinity,
-            alignment: .top
-        )
-        .onAppear {
-            routeToSetupIfNeeded(for: viewModel.primaryJourneyPresentation.phase)
-        }
-        .onChange(of: viewModel.primaryJourneyPresentation.phase) { _, phase in
-            routeToSetupIfNeeded(for: phase)
+        .frame(minWidth: Layout.minimumWindowWidth, maxHeight: .infinity, alignment: .top)
+        .animation(reduceMotion ? nil : MotionTokens.easeOut(), value: selectedTab)
+        .environment(\.interfaceStyle, interfaceStyle)
+        .popover(isPresented: $isDiagnosticsPresented) {
+            diagnosticsPopover.environment(\.interfaceStyle, interfaceStyle)
         }
         .alert("选择本次签名方式", isPresented: manualRefreshPromptIsPresented) {
             Button("更新签名描述文件并安装") {
                 viewModel.confirmManualRefresh(profileRefreshMode: .force)
             }
-            .keyboardShortcut(.defaultAction)
 
             Button("优先复用现有描述文件并安装") {
                 viewModel.confirmManualRefresh(profileRefreshMode: .automatic)
@@ -186,6 +182,7 @@ struct MainPanelView: View {
                 logText: viewModel.deployLogText,
                 onClose: { isDeployLogPresented = false }
             )
+            .environment(\.interfaceStyle, interfaceStyle)
         }
     }
 
@@ -200,139 +197,69 @@ struct MainPanelView: View {
         )
     }
 
-    private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            brandArea
-
-            VStack(spacing: 2) {
-                ForEach(PanelTab.allCases) { tab in
-                    tabButton(for: tab)
-                }
-            }
-
-            Spacer(minLength: SpacingTokens.md)
-
-            Button {
-                isDiagnosticsPresented.toggle()
-            } label: {
-                sidebarUtilityLabel(systemName: "stethoscope", title: "诊断")
-            }
-            .buttonStyle(.plain)
-            .popover(isPresented: $isDiagnosticsPresented, arrowEdge: .leading) {
-                diagnosticsPopover
-            }
-            .help("显示诊断信息")
-            .accessibilityLabel("诊断信息")
-
-            Text(applicationVersionPresentation.sidebarText)
-                .font(.system(size: 10))
-                .foregroundStyle(ColorTokens.Text.tertiary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.leading, 36)
-                .padding(.top, 8)
-                .padding(.bottom, 12)
-                .help(applicationVersionPresentation.detailText)
-                .accessibilityLabel(applicationVersionPresentation.detailText)
-        }
-        .padding(.horizontal, 10)
-        .frame(width: Layout.sidebarWidth, alignment: .leading)
-        .background(.regularMaterial)
-    }
-
-    private var brandArea: some View {
-        VStack(spacing: 6) {
+    private var commandBar: some View {
+        HStack(spacing: 10) {
             SidebarBrandIcon(
                 presentation: viewModel.primaryJourneyPresentation.renewalIcon,
                 statusDescription: viewModel.primaryJourneyPresentation.header.title,
-                isAnimationActive: panelVisibility.isVisible,
-                size: SidebarBrandIconStyle.size
+                isAnimationActive: panelVisibility.isVisible && selectedTab == .status,
+                size: Layout.brandIconSize
             )
-
-            Text("iOSSignKit")
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(ColorTokens.Text.primary)
-
-            Text(sidebarStatusText)
-                .font(.system(size: 11))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("iOSSignKit")
+                    .font(TypeTokens.cardTitle.bold())
+                    .foregroundStyle(ColorTokens.Text.primary)
+                Text(commandBarStatusText)
+                    .font(TypeTokens.auxiliary)
+                    .foregroundStyle(ColorTokens.Text.secondary)
+                    .lineLimit(1)
+                    .help(commandBarStatusText)
+            }
+            .frame(maxWidth: 260, alignment: .leading)
+            Spacer(minLength: 8)
+            Text(statusPageDetail)
+                .font(TypeTokens.caption)
                 .foregroundStyle(ColorTokens.Text.secondary)
                 .lineLimit(1)
-                .frame(maxWidth: .infinity)
-        }
-        .frame(maxWidth: .infinity)
-        .frame(height: SidebarBrandIconStyle.reservedHeight, alignment: .top)
-        .padding(.top, 8)
-    }
-
-    private func sidebarUtilityLabel(
-        systemName: String,
-        title: String
-    ) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: systemName)
-                .font(.system(size: 14, weight: .semibold))
-                .frame(width: 20, height: 20)
-                .accessibilityHidden(true)
-            Text(title)
-                .font(TypeTokens.body)
-            Spacer(minLength: 0)
-        }
-        .foregroundStyle(ColorTokens.Text.secondary)
-        .padding(.horizontal, 10)
-        .frame(maxWidth: .infinity, minHeight: SpacingTokens.ControlHeight.sidebarItem, alignment: .leading)
-        .contentShape(Rectangle())
-    }
-
-    private func tabButton(for tab: PanelTab) -> some View {
-        Button {
-            withAnimation(MotionTokens.easeOut()) {
-                selectedTab = tab
+                .help(statusPageDetail)
+            Button("诊断", systemImage: "stethoscope") {
+                isDiagnosticsPresented.toggle()
             }
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: tab.systemImage)
-                    .font(.system(size: 14, weight: .semibold))
-                    .frame(width: SidebarTabIconStyle.slotSize, height: SidebarTabIconStyle.slotSize)
-                    .foregroundStyle(
-                        selectedTab == tab
-                            ? ColorTokens.Accent.renew
-                            : ColorTokens.Text.secondary
-                    )
-                    .accessibilityHidden(true)
-
-                Text(tab.rawValue)
-                    .font(TypeTokens.body.weight(selectedTab == tab ? .semibold : .regular))
-                    .foregroundStyle(
-                        selectedTab == tab
-                            ? ColorTokens.Text.primary
-                            : ColorTokens.Text.secondary
-                    )
-
-                Spacer(minLength: 0)
-
-                if tab == .settings && viewModel.setupViewModel.hasUnsavedChanges {
-                    Circle()
-                        .fill(ColorTokens.Semantic.warning)
+            .buttonStyle(RenewalButtonStyle(kind: .text))
+            Button {
+                showSettings(category: selectedSettingsCategory)
+            } label: {
+                Label("设置", systemImage: "gearshape")
+                if viewModel.setupViewModel.hasUnsavedChanges {
+                    Circle().fill(ColorTokens.Semantic.warning)
                         .frame(width: 7, height: 7)
                         .accessibilityLabel("有未保存更改")
                 }
             }
-            .padding(.horizontal, 10)
-            .frame(maxWidth: .infinity, minHeight: SpacingTokens.ControlHeight.sidebarItem, alignment: .leading)
-            .background(
-                RoundedRectangle(
-                    cornerRadius: SpacingTokens.Radius.control,
-                    style: .continuous
-                )
-                .fill(
-                    selectedTab == tab
-                        ? ColorTokens.Accent.renew.opacity(0.14)
-                        : Color.clear
-                )
-            )
-            .contentShape(Rectangle())
+            .buttonStyle(RenewalButtonStyle(kind: .text))
+            .focused($focusedEntry, equals: .settings)
+            Text(applicationVersionPresentation.sidebarText)
+                .font(TypeTokens.auxiliary)
+                .foregroundStyle(ColorTokens.Text.secondary)
+                .help(applicationVersionPresentation.detailText)
+                .accessibilityLabel(applicationVersionPresentation.detailText)
         }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(selectedTab == tab ? .isSelected : [])
+        .padding(.horizontal, 16)
+        .frame(height: Layout.commandBarHeight)
+        .background(.regularMaterial)
+        .overlay(alignment: .bottom) {
+            ColorTokens.Border.subtle.frame(height: 1)
+        }
+    }
+
+    private func closeContentPage() {
+        let previousPage = selectedTab
+        navigationState.closeContentPage()
+        if previousPage == .history {
+            historyEntryFocused = true
+        } else {
+            focusedEntry = .settings
+        }
     }
 
     @ViewBuilder
@@ -341,13 +268,11 @@ struct MainPanelView: View {
         case .status:
             statusPage
         case .history:
-            ScrollView {
-                HistoryPanelView(
-                    viewModel: viewModel,
-                    onBackToStatus: { selectedTab = .status }
-                )
-            }
-            .scrollIndicators(.hidden)
+            HistoryPanelView(
+                viewModel: viewModel,
+                onBackToStatus: closeContentPage,
+                selectedEntryID: selectedHistoryID
+            )
         case .settings:
             SettingsPanelView(
                 viewModel: viewModel,
@@ -357,50 +282,43 @@ struct MainPanelView: View {
                     set: { selectedSettingsCategory = $0 }
                 ),
                 onOpenDiagnostics: { isDiagnosticsPresented = true },
-                initialScrollAnchor: settingsInitialScrollAnchor
+                initialScrollAnchor: settingsInitialScrollAnchor,
+                interfaceStyle: Binding(
+                    get: { interfaceStyle },
+                    set: { storedInterfaceStyle = $0.rawValue }
+                ),
+                onClose: closeContentPage
             )
         }
     }
 
     private var statusPage: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: SpacingTokens.sm) {
-                pageHeader(
-                    title: "状态",
-                    detail: statusPageDetail
-                )
-
-                ExpiryCommandCenterView(
-                    presentation: viewModel.primaryJourneyPresentation,
-                    deployLogText: viewModel.deployLogText,
-                    onAction: handlePrimaryJourneyAction,
-                    onDeviceSelectionRequested: {
-                        showSettings(category: .target)
-                    },
-                    isAnimationActive: panelVisibility.isVisible
-                )
+        GeometryReader { geometry in
+            VStack(spacing: 12) {
+                ScrollView {
+                    ExpiryCommandCenterView(
+                        presentation: viewModel.primaryJourneyPresentation,
+                        deployLogText: viewModel.deployLogText,
+                        onAction: handlePrimaryJourneyAction,
+                        onDeviceSelectionRequested: { showSettings(category: .target) },
+                        isAnimationActive: panelVisibility.isVisible && selectedTab == .status,
+                        config: viewModel.config,
+                        availableWidth: max(geometry.size.width - 40, 0),
+                        minimumHeight: max(geometry.size.height - 90, 440)
+                    )
+                    .padding(.vertical, 2)
+                }
+                RecentHistoryStrip(
+                    entries: viewModel.historyEntries, allHistoryFocus: $historyEntryFocused
+                ) { entryID in
+                    selectedHistoryID = entryID
+                    selectedTab = .history
+                }
             }
-            .padding(SpacingTokens.lg)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
+            .padding(.bottom, 14)
         }
-        .scrollIndicators(.hidden)
-    }
-
-    private func pageHeader(title: String, detail: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Text(title)
-                .font(TypeTokens.pageTitle)
-                .foregroundStyle(ColorTokens.Text.primary)
-                .accessibilityAddTraits(.isHeader)
-
-            Spacer(minLength: 0)
-
-            Text(detail)
-                .font(TypeTokens.caption)
-                .foregroundStyle(ColorTokens.Text.secondary)
-                .lineLimit(1)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var diagnosticsPopover: some View {
@@ -493,7 +411,7 @@ struct MainPanelView: View {
         return viewModel.primaryJourneyPresentation.header.lastFullVerificationSummary
     }
 
-    private var sidebarStatusText: String {
+    private var commandBarStatusText: String {
         let presentation = viewModel.primaryJourneyPresentation
         let expiryText = presentation.header.remainingExpiryText
         switch presentation.phase {
@@ -529,9 +447,8 @@ struct MainPanelView: View {
         case .performed, .manualSigningChoiceRequired:
             break
         case .openHistory:
-            withAnimation(MotionTokens.easeOut()) {
-                selectedTab = .history
-            }
+            selectedHistoryID = nil
+            selectedTab = .history
         case .showDeployLog:
             isDeployLogPresented = true
         case .rejected:
@@ -539,16 +456,8 @@ struct MainPanelView: View {
         }
     }
 
-    private func routeToSetupIfNeeded(for phase: PrimaryJourneyPhase) {
-        if phase == .needsSetup {
-            navigationState.showSettings(category: .target)
-        }
-    }
-
     private func showSettings(category: SettingsPanelCategory) {
-        withAnimation(MotionTokens.easeOut()) {
-            navigationState.showSettings(category: category)
-        }
+        navigationState.showSettings(category: category)
     }
 
     private func environmentCheckSystemImage(

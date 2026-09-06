@@ -146,6 +146,19 @@ enum ColorTokens {
         )
     }
 
+    enum Glass {
+        static let border = ColorTokens.dynamic(
+            light: ColorTokens.rgb(255, 255, 255, 0.75), dark: ColorTokens.rgb(255, 255, 255, 0.14))
+        static let accent = ColorTokens.dynamic(
+            light: ColorTokens.rgb(47, 124, 246), dark: ColorTokens.rgb(94, 162, 255))
+        static let accentEnd = ColorTokens.dynamic(
+            light: ColorTokens.rgb(88, 201, 255), dark: ColorTokens.rgb(99, 224, 230))
+        static var accentGradient: LinearGradient {
+            LinearGradient(
+                colors: [accent, accentEnd], startPoint: .topLeading, endPoint: .bottomTrailing)
+        }
+    }
+
     enum Log {
         static let background = ColorTokens.dynamic(
             light: ColorTokens.rgb(16, 18, 22),

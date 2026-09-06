@@ -270,6 +270,7 @@ private struct RenewalRingAnimationPhases {
 }
 
 struct RenewalRingView: View {
+    @Environment(\.interfaceStyle) private var interfaceStyle
     enum AmbientActivityStyle: Equatable {
         case inlineArc
         case twinArcOrbit
@@ -503,7 +504,7 @@ struct RenewalRingView: View {
                     to: RenewalRingVisualSpecification.twinArcFraction
                 )
                 .stroke(
-                    ColorTokens.Accent.renewGradient,
+                    interfaceStyle.accentGradient,
                     style: StrokeStyle(
                         lineWidth: orbit.lineWidth,
                         lineCap: .round
@@ -518,7 +519,7 @@ struct RenewalRingView: View {
                     to: RenewalRingVisualSpecification.twinArcFraction
                 )
                 .stroke(
-                    ColorTokens.Accent.renew.opacity(
+                    interfaceStyle.accent.opacity(
                         RenewalRingVisualSpecification
                             .twinArcSecondaryOpacity
                     ),
@@ -625,7 +626,7 @@ struct RenewalRingView: View {
     private var toneColor: Color {
         switch tone {
         case .normal:
-            ColorTokens.Accent.renew
+            interfaceStyle.accent
         case .neutral:
             ColorTokens.Semantic.offline
         case .warning:
@@ -642,7 +643,7 @@ struct RenewalRingView: View {
     private var progressStyle: AnyShapeStyle {
         switch specification.paint {
         case .normalGradient, .activeGradient:
-            AnyShapeStyle(ColorTokens.Accent.renewGradient)
+            AnyShapeStyle(interfaceStyle.accentGradient)
         case .neutral:
             AnyShapeStyle(ColorTokens.Semantic.offline)
         case .warning:

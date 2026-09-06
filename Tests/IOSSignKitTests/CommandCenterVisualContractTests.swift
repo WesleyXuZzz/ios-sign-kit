@@ -191,14 +191,10 @@ struct CommandCenterVisualContractTests {
     }
 
     @Test
-    func sidebarRenewalIconFitsWithoutMovingTheNavigationRows() {
-        let style = MainPanelView.SidebarBrandIconStyle.self
-        let availableWidth = MainPanelView.Layout.sidebarWidth - 20
-
-        #expect(style.size == SidebarBrandIcon.Layout.defaultSize)
-        #expect(style.size == 64)
-        #expect(style.size <= availableWidth)
-        #expect(style.reservedHeight == 140)
+    func commandBarKeepsACompactBrandWithoutChangingWindowWidth() {
+        #expect(MainPanelView.Layout.brandIconSize == 30)
+        #expect(MainPanelView.Layout.commandBarHeight == 56)
+        #expect(MainPanelView.Layout.minimumWindowWidth == 860)
     }
 
     @MainActor

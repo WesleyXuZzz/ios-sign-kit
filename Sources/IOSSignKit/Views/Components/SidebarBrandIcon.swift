@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 侧栏品牌标记：透明底的 Renewal Loop，与设计稿中的 64pt 品牌区保持一致。
+/// 可缩放的 Renewal Loop 品牌标记，主命令栏以 30pt 展示。
 struct SidebarBrandIcon: View {
     enum Layout {
         static let defaultSize: CGFloat = 64
@@ -77,6 +77,7 @@ struct SidebarBrandIcon: View {
 }
 
 private struct SidebarBrandMark: View {
+    @Environment(\.interfaceStyle) private var interfaceStyle
     let phases: RenewalIconMotionPhases
     let profile: RenewalIconMotionProfile
     let size: CGFloat
@@ -88,7 +89,7 @@ private struct SidebarBrandMark: View {
             Circle()
                 .trim(from: 0, to: ringFraction)
                 .stroke(
-                    ColorTokens.Accent.renewGradient,
+                    interfaceStyle.accentGradient,
                     style: StrokeStyle(
                         lineWidth: size * 5 / 64,
                         lineCap: .round
@@ -107,7 +108,7 @@ private struct SidebarBrandMark: View {
                 style: .continuous
             )
             .stroke(
-                ColorTokens.Accent.renewGradient,
+                interfaceStyle.accentGradient,
                 lineWidth: size * 3 / 64
             )
             .frame(
@@ -127,6 +128,7 @@ private struct SidebarBrandMark: View {
 }
 
 private struct SidebarBrandBolt: View {
+    @Environment(\.interfaceStyle) private var interfaceStyle
     let size: CGFloat
     let phase: Double
     let pulseScale: CGFloat
@@ -142,7 +144,7 @@ private struct SidebarBrandBolt: View {
             path.addLine(to: CGPoint(x: 33 * scale, y: 30 * scale))
             path.closeSubpath()
         }
-        .fill(ColorTokens.Accent.renewGradient)
+        .fill(interfaceStyle.accentGradient)
         .scaleEffect(
             1 + (pulseScale * (0.5 + (0.5 * sin(phase * 2 * .pi))))
         )

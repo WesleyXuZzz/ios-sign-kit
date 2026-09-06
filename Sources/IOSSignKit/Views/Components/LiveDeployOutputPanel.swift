@@ -12,6 +12,7 @@ struct LiveDeployOutputPanel: View {
     let logText: String
     let onExpand: () -> Void
 
+    @Environment(\.interfaceStyle) private var interfaceStyle
     @State private var autoScrollEnabled = true
 
     private static let tailAnchorID = "live-deploy-output-tail"
@@ -27,20 +28,8 @@ struct LiveDeployOutputPanel: View {
 
             logBody
         }
-        .background(ColorTokens.BG.surface)
-        .clipShape(
-            RoundedRectangle(
-                cornerRadius: SpacingTokens.Radius.card,
-                style: .continuous
-            )
-        )
-        .overlay {
-            RoundedRectangle(
-                cornerRadius: SpacingTokens.Radius.card,
-                style: .continuous
-            )
-            .strokeBorder(ColorTokens.Border.subtle, lineWidth: 1)
-        }
+        .clipShape(RoundedRectangle(cornerRadius: interfaceStyle.cardRadius))
+        .interfaceSurface()
         .accessibilityElement(children: .contain)
     }
 
@@ -56,52 +45,27 @@ struct LiveDeployOutputPanel: View {
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "terminal")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(ColorTokens.Text.secondary)
-                .frame(width: 20, height: 20)
-                .accessibilityHidden(true)
-
-            Text("实时输出")
-                .font(TypeTokens.cardTitle)
-                .foregroundStyle(ColorTokens.Text.primary)
-
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(ColorTokens.Accent.renew)
-                    .frame(width: 7, height: 7)
-                    .accessibilityHidden(true)
-
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Label("实时输出", systemImage: "terminal")
+                    .font(TypeTokens.cardTitle)
+                Spacer(minLength: 4)
                 Text("正在更新")
-                    .font(TypeTokens.caption)
+                    .font(TypeTokens.auxiliary)
                     .foregroundStyle(ColorTokens.Accent.renew)
             }
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("日志正在实时更新")
-
-            Spacer(minLength: SpacingTokens.md)
-
-            Button {
-                onExpand()
-            } label: {
-                Label(
-                    "展开",
-                    systemImage: "arrow.up.left.and.arrow.down.right"
-                )
+            HStack {
+                Toggle("自动滚动", isOn: $autoScrollEnabled)
+                    .toggleStyle(.checkbox)
+                    .controlSize(.small)
+                    .font(TypeTokens.caption)
+                Spacer(minLength: 4)
+                Button("展开", systemImage: "arrow.up.left.and.arrow.down.right", action: onExpand)
+                    .buttonStyle(RenewalButtonStyle(kind: .text))
             }
-            .buttonStyle(RenewalButtonStyle(kind: .text))
-            .help("在浮层中查看完整续签日志")
-
-            Toggle("自动滚动", isOn: $autoScrollEnabled)
-                .toggleStyle(.checkbox)
-                .controlSize(.small)
-                .font(TypeTokens.caption)
-                .foregroundStyle(ColorTokens.Text.secondary)
-                .help("有新输出时自动滚动到日志末尾")
         }
-        .padding(.horizontal, 16)
-        .frame(minHeight: 46)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
     }
 
     private var logBody: some View {

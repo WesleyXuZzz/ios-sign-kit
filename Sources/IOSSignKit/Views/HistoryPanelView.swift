@@ -1,8 +1,12 @@
 import SwiftUI
 
 struct HistoryPanelView: View {
+    @FocusState private var closeButtonFocused: Bool
     @ObservedObject var viewModel: MenuBarViewModel
     let onBackToStatus: () -> Void
+    var selectedEntryID: String? = nil
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var selectedFilter: Filter = .all
 
@@ -30,17 +34,29 @@ struct HistoryPanelView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: SpacingTokens.sm) {
+        VStack(alignment: .leading, spacing: 0) {
             pageHeader
-
-            if filteredEntries.isEmpty {
-                emptyState
-            } else {
-                historyGroups
+                .padding(.horizontal, SpacingTokens.lg)
+                .padding(.vertical, 14)
+                .background(.regularMaterial)
+                .overlay(alignment: .bottom) { ColorTokens.Border.subtle.frame(height: 1) }
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: SpacingTokens.sm) {
+                        if filteredEntries.isEmpty {
+                            emptyState
+                        } else {
+                            historyGroups
+                        }
+                    }
+                    .padding(SpacingTokens.lg)
+                }
+                .onAppear {
+                    if let selectedEntryID { proxy.scrollTo(selectedEntryID, anchor: .top) }
+                }
             }
         }
-        .padding(SpacingTokens.lg)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var pageHeader: some View {
@@ -55,13 +71,19 @@ struct HistoryPanelView: View {
             HStack(spacing: SpacingTokens.xs) {
                 ForEach(Filter.allCases) { filter in
                     Button(filter.rawValue) {
-                        withAnimation(MotionTokens.easeOut()) {
+                        withAnimation(reduceMotion ? nil : MotionTokens.easeOut()) {
                             selectedFilter = filter
                         }
                     }
                     .buttonStyle(HistoryFilterButtonStyle(isSelected: selectedFilter == filter))
                 }
             }
+            Spacer(minLength: 0)
+            Button("完成", action: onBackToStatus)
+                .buttonStyle(RenewalButtonStyle(kind: .secondary))
+                .keyboardShortcut(.cancelAction)
+                .focused($closeButtonFocused)
+                .onAppear { closeButtonFocused = true }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -81,10 +103,12 @@ struct HistoryPanelView: View {
                     ForEach(group.entries) { entry in
                         HistoryTimelineRow(
                             entry: entry,
-                            dateGroup: group.kind
+                            dateGroup: group.kind,
+                            initiallyExpanded: entry.id == selectedEntryID
                         ) {
                             viewModel.openHistoryEntry(entry)
                         }
+                        .id(entry.id)
                     }
                 }
             }
@@ -114,16 +138,26 @@ struct HistoryPanelView: View {
                 isAnimationActive: false
             )
 
-            Text("还没有续签记录")
+            Text(viewModel.historyEntries.isEmpty ? "还没有续签记录" : "当前筛选没有结果")
                 .font(TypeTokens.cardTitle)
                 .foregroundStyle(ColorTokens.Text.secondary)
 
-            Text("完成一次「立即续签」后，这里会按时间线展示每次结果与日志。")
+            Text(
+                viewModel.historyEntries.isEmpty ? "完成一次续签后，这里会展示每次结果与日志。" : "请选择其他筛选条件，或加载更多历史记录。"
+            )
                 .font(TypeTokens.caption)
                 .foregroundStyle(ColorTokens.Text.tertiary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
 
+            if viewModel.hasMoreHistoryEntries {
+                Button(
+                    viewModel.isLoadingMoreHistory ? "正在加载…" : "加载更多",
+                    action: viewModel.loadMoreHistory
+                )
+                .buttonStyle(RenewalButtonStyle(kind: .secondary))
+                .disabled(viewModel.isLoadingMoreHistory)
+            }
             Button("返回状态页") {
                 onBackToStatus()
             }
@@ -285,13 +319,25 @@ struct HistoryTimelineRow: View {
     let dateGroup: HistoryDateGroup
     let onOpen: () -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(
+        entry: RefreshHistoryEntry, dateGroup: HistoryDateGroup, initiallyExpanded: Bool = false,
+        onOpen: @escaping () -> Void
+    ) {
+        self.entry = entry
+        self.dateGroup = dateGroup
+        self.onOpen = onOpen
+        _isExpanded = State(initialValue: initiallyExpanded)
+    }
+
     @State private var isExpanded = false
     @State private var isHovering = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                withAnimation(MotionTokens.easeOut()) {
+                withAnimation(reduceMotion ? nil : MotionTokens.easeOut()) {
                     isExpanded.toggle()
                 }
             } label: {
@@ -373,28 +419,15 @@ struct HistoryTimelineRow: View {
                 .transition(.opacity)
             }
         }
-        .background(
-            RoundedRectangle(
-                cornerRadius: SpacingTokens.Radius.card,
-                style: .continuous
-            )
-            .fill(ColorTokens.BG.surface)
-        )
-        .overlay(
-            RoundedRectangle(
-                cornerRadius: SpacingTokens.Radius.card,
-                style: .continuous
-            )
-            .strokeBorder(ColorTokens.Border.subtle, lineWidth: 1)
-        )
+        .interfaceSurface()
         .shadow(
             color: .black.opacity(isHovering ? 0.08 : 0),
             radius: isHovering ? 7 : 0,
             x: 0,
             y: isHovering ? 4 : 0
         )
-        .offset(x: isHovering ? 3 : 0)
-        .animation(MotionTokens.easeOut(), value: isHovering)
+        .offset(x: isHovering && !reduceMotion ? 3 : 0)
+        .animation(reduceMotion ? nil : MotionTokens.easeOut(), value: isHovering)
         .onHover { isHovering = $0 }
     }
 

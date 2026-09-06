@@ -821,6 +821,8 @@ final class StatusBarController: NSObject, NSWindowDelegate {
         )
         window.title = "iOS 个人签名续期工具"
         window.isReleasedWhenClosed = false
+        window.isOpaque = false
+        window.backgroundColor = .clear
         window.contentMinSize = window.contentRect(
             forFrameRect: NSRect(
                 origin: .zero,

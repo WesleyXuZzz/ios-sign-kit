@@ -67,20 +67,7 @@ struct SettingsSectionCard<Content: View>: View {
         .padding(.horizontal, SpacingTokens.md)
         .padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(
-            RoundedRectangle(
-                cornerRadius: SpacingTokens.Radius.card,
-                style: .continuous
-            )
-            .fill(ColorTokens.BG.surface)
-        )
-        .overlay(
-            RoundedRectangle(
-                cornerRadius: SpacingTokens.Radius.card,
-                style: .continuous
-            )
-            .strokeBorder(ColorTokens.Border.subtle, lineWidth: 1)
-        )
+        .interfaceSurface()
     }
 }
 
@@ -95,6 +82,9 @@ struct RenewalButtonStyle: ButtonStyle {
     let kind: Kind
     var height: CGFloat = SpacingTokens.ControlHeight.secondary
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.interfaceStyle) private var interfaceStyle
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -110,20 +100,20 @@ struct RenewalButtonStyle: ButtonStyle {
             .overlay(border)
             .clipShape(
                 RoundedRectangle(
-                    cornerRadius: SpacingTokens.Radius.control,
+                    cornerRadius: interfaceStyle.controlRadius,
                     style: .continuous
                 )
             )
             .contentShape(
                 RoundedRectangle(
-                    cornerRadius: SpacingTokens.Radius.control,
+                    cornerRadius: interfaceStyle.controlRadius,
                     style: .continuous
                 )
             )
-            .scaleEffect(configuration.isPressed && isEnabled ? 0.97 : 1)
+            .scaleEffect(configuration.isPressed && isEnabled && !reduceMotion ? 0.97 : 1)
             .opacity(isEnabled ? 1 : 0.4)
             .animation(
-                .easeOut(duration: MotionTokens.fast),
+                reduceMotion ? nil : .easeOut(duration: MotionTokens.fast),
                 value: configuration.isPressed
             )
     }
@@ -145,9 +135,17 @@ struct RenewalButtonStyle: ButtonStyle {
         Group {
             switch kind {
             case .primary:
-                ColorTokens.Accent.renew
+                if interfaceStyle == .glass {
+                    ColorTokens.Glass.accentGradient
+                } else {
+                    ColorTokens.Accent.renew
+                }
             case .secondary:
-                ColorTokens.BG.surface
+                if interfaceStyle.usesTransparency(reduceTransparency: reduceTransparency) {
+                    Rectangle().fill(.regularMaterial)
+                } else {
+                    ColorTokens.BG.surface
+                }
             case .text:
                 Color.clear
             case .destructive:
@@ -163,7 +161,7 @@ struct RenewalButtonStyle: ButtonStyle {
                 Color.clear
             case .secondary:
                 RoundedRectangle(
-                    cornerRadius: SpacingTokens.Radius.control,
+                    cornerRadius: interfaceStyle.controlRadius,
                     style: .continuous
                 )
                 .strokeBorder(ColorTokens.Border.strong, lineWidth: 1)

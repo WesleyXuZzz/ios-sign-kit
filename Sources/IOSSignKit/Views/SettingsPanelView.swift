@@ -70,12 +70,15 @@ enum SettingsCategoryControlLayout {
 }
 
 struct SettingsPanelView: View {
+    @FocusState private var closeButtonFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var viewModel: MenuBarViewModel
     @ObservedObject var setupViewModel: SetupWizardViewModel
     @Binding var selectedCategory: SettingsPanelCategory
     let onOpenDiagnostics: () -> Void
     let initialScrollAnchor: UnitPoint
+    @Binding var interfaceStyle: InterfaceStyle
+    let onClose: () -> Void
 
     @State private var copiedDiagnosticReport = false
     @State private var isRestoreDefaultsConfirmationPresented = false
@@ -87,26 +90,26 @@ struct SettingsPanelView: View {
         setupViewModel: SetupWizardViewModel,
         selectedCategory: Binding<SettingsPanelCategory>,
         onOpenDiagnostics: @escaping () -> Void,
-        initialScrollAnchor: UnitPoint = .top
+        initialScrollAnchor: UnitPoint = .top,
+        interfaceStyle: Binding<InterfaceStyle> = .constant(.native),
+        onClose: @escaping () -> Void = {}
     ) {
         self.viewModel = viewModel
         self.setupViewModel = setupViewModel
         _selectedCategory = selectedCategory
         self.onOpenDiagnostics = onOpenDiagnostics
         self.initialScrollAnchor = initialScrollAnchor
+        _interfaceStyle = interfaceStyle
+        self.onClose = onClose
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(
-                alignment: .leading,
-                spacing: SettingsCategoryControlLayout.headerSpacing
-            ) {
-                header
-                categoryPicker
-            }
-            .padding(.horizontal, SpacingTokens.lg)
-            .padding(.top, SpacingTokens.lg)
+            header
+                .padding(.horizontal, SpacingTokens.lg)
+                .padding(.vertical, SpacingTokens.sm)
+                .background(.regularMaterial)
+                .overlay(alignment: .bottom) { ColorTokens.Border.subtle.frame(height: 1) }
 
             ZStack(alignment: .topLeading) {
                 ForEach(SettingsPanelCategory.allCases) { category in
@@ -145,13 +148,20 @@ struct SettingsPanelView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(alignment: .center, spacing: 16) {
             Text("设置")
                 .font(TypeTokens.pageTitle)
                 .foregroundStyle(ColorTokens.Text.primary)
                 .accessibilityAddTraits(.isHeader)
-
             Spacer(minLength: 0)
+            categoryPicker
+            Spacer(minLength: 0)
+            Button("完成", action: onClose)
+                .buttonStyle(RenewalButtonStyle(kind: .secondary))
+                .keyboardShortcut(.cancelAction)
+                .focused($closeButtonFocused)
+                .onAppear { closeButtonFocused = true }
+                .help("返回工作台；未存储的更改仍保留在草稿中")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -350,6 +360,9 @@ struct SettingsPanelView: View {
                 issuePairingURL: viewModel.issueLANControlPairingURL
             )
         case .general:
+            SettingsSectionCard(title: "界面风格", systemImage: "paintpalette") {
+                interfaceStyleSection
+            }
             SettingsSectionCard(title: "启动", systemImage: "power") {
                 launchAtLoginSection
             }
@@ -727,6 +740,54 @@ struct SettingsPanelView: View {
         }
     }
 
+    private var interfaceStyleSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                ForEach(InterfaceStyle.allCases) { style in
+                    Button {
+                        interfaceStyle = style
+                    } label: {
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(
+                                systemName: interfaceStyle == style
+                                    ? "checkmark.circle.fill" : "circle"
+                            )
+                            .foregroundStyle(ColorTokens.Accent.renew)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(style.title).font(TypeTokens.cardTitle)
+                                Text(style.detail)
+                                    .font(TypeTokens.caption)
+                                    .foregroundStyle(ColorTokens.Text.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            ColorTokens.Accent.renew.opacity(interfaceStyle == style ? 0.12 : 0.03)
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 10)
+                                .strokeBorder(
+                                    interfaceStyle == style
+                                        ? ColorTokens.Accent.renew : ColorTokens.Border.subtle,
+                                    lineWidth: 1)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(interfaceStyle == style ? .isSelected : [])
+                    .accessibilityLabel(style.title)
+                }
+            }
+            Text("立即生效并自动保存。两种风格均跟随系统浅色/深色外观；启用减少透明度时使用不透明表面。")
+                .font(TypeTokens.caption)
+                .foregroundStyle(ColorTokens.Text.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     private var launchAtLoginSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
@@ -838,7 +899,7 @@ struct SettingsPanelView: View {
         }
         .padding(.horizontal, SpacingTokens.lg)
         .padding(.vertical, SpacingTokens.sm)
-        .background(ColorTokens.BG.canvas)
+        .background(.regularMaterial)
         .overlay(alignment: .top) {
             Rectangle()
                 .fill(ColorTokens.Border.subtle)
@@ -957,9 +1018,9 @@ struct SettingsPanelView: View {
     private func policyHelpText(for policy: AutoRefreshPolicy) -> String {
         switch policy {
         case .reminderOnly:
-            "到期前发送通知，由你手动触发续签"
+            "确认签名到期且设备在线时提醒，由你手动触发续签"
         case .autoRefreshWhenExpired:
-            "剩余不足 24 小时且设备已连接时，自动续期"
+            "确认 App 已安装且签名到期后，等待设备解锁与 Xcode 就绪，再复核并自动续期"
         }
     }
 
