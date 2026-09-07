@@ -211,7 +211,7 @@ final class AppBootstrapper {
                 recovered.lastResult = .interrupted
                 recovered.deploymentRecoveryBlocked = true
                 recovered.lastErrorSummary =
-                    "启动时发现缺少精确持久化令牌的遗留续签；无法安全终止，已阻止新续签：\(diagnostic)"
+                    "启动时无法确认是否存在遗留续签进程，已阻止新续签：\(diagnostic)"
                 didChange = true
             }
         }

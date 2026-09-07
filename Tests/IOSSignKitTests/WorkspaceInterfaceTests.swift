@@ -7,6 +7,15 @@ import Testing
 struct WorkspaceInterfaceTests {
     @Test
     @MainActor
+    func elapsedTimeOnlyDescribesRunningWork() {
+        #expect(!ActivityFocusCard.showsElapsedTime(for: .processRecoveryBlocked))
+        #expect(!ActivityFocusCard.showsElapsedTime(for: .currentFeedback))
+        #expect(ActivityFocusCard.showsElapsedTime(for: .deploying))
+        #expect(ActivityFocusCard.showsElapsedTime(for: .checking))
+    }
+
+    @Test
+    @MainActor
     func stylePreferenceRestoresAcrossReadersAndFallsBackForUnknownValues() throws {
         let suiteName = "interface-style-tests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))

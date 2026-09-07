@@ -4,6 +4,41 @@ import Testing
 
 struct DeploymentProcessRecoveryTests {
     @Test
+    func transientProcessListFailureIsRetried() {
+        let sequence = RecoveryProcessListSequence([
+            CommandResult(standardOutput: "", standardError: "timeout", terminationStatus: 1),
+            CommandResult(standardOutput: "", standardError: "", terminationStatus: 0)
+        ])
+        let outcome = DeploymentProcessRecovery(processListProvider: { sequence.next() })
+            .recoverAnyDeployment()
+        #expect(outcome == .notFound)
+        #expect(sequence.count == 2)
+    }
+
+    @Test
+    func repeatedProcessListFailureRemainsBlocked() {
+        let sequence = RecoveryProcessListSequence([
+            CommandResult(standardOutput: "", standardError: "timeout", terminationStatus: 1)
+        ])
+        let outcome = DeploymentProcessRecovery(processListProvider: { sequence.next() })
+            .recoverAnyDeployment()
+        #expect(outcome == .unresolved("读取进程表失败：timeout"))
+        #expect(sequence.count == 3)
+    }
+
+    @Test
+    func unresolvedProcessListCommandIsNotRetried() {
+        let sequence = RecoveryProcessListSequence([
+            CommandResult(standardOutput: "", standardError: "unresolved", terminationStatus: 1,
+                          processGroupTerminationWasConfirmed: false)
+        ])
+        let outcome = DeploymentProcessRecovery(processListProvider: { sequence.next() })
+            .recoverAnyDeployment()
+        #expect(outcome == .unresolved("读取进程表失败：unresolved"))
+        #expect(sequence.count == 1)
+    }
+
+    @Test
     func startupRecoveryTerminatesOrdinaryCommandAcrossNewSession() throws {
         let creatorHarness =
             try spawnZombieCreatorHarness()
@@ -911,5 +946,27 @@ private func changeRecordedCreatorStartTime(
     }
     guard fsync(descriptor) == 0 else {
         throw ProcessRecoveryTestError.malformedMarker
+    }
+}
+
+private final class RecoveryProcessListSequence: @unchecked Sendable {
+    private let lock = NSLock()
+    private let results: [CommandResult]
+    private var calls = 0
+
+    init(_ results: [CommandResult]) { self.results = results }
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return calls
+    }
+
+    func next() -> CommandResult {
+        lock.lock()
+        defer { lock.unlock() }
+        let result = results[min(calls, results.count - 1)]
+        calls += 1
+        return result
     }
 }

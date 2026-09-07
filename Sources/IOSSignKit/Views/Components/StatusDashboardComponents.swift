@@ -1111,6 +1111,10 @@ struct ActivityFocusCard: View {
         task?.kind == .deploying
     }
 
+    static func showsElapsedTime(for kind: PrimaryJourneyTask.Kind) -> Bool {
+        kind != .currentFeedback && kind != .processRecoveryBlocked
+    }
+
     static func liveOutputAction(
         for task: PrimaryJourneyTask
     ) -> PrimaryJourneyAction? {
@@ -1149,7 +1153,7 @@ struct ActivityFocusCard: View {
                             .foregroundStyle(ColorTokens.Text.primary)
                             .fixedSize(horizontal: false, vertical: true)
 
-                        if task.kind != .currentFeedback {
+                        if Self.showsElapsedTime(for: task.kind) {
                             Text(elapsedText(at: context.date))
                                 .font(TypeTokens.mono)
                                 .foregroundStyle(ColorTokens.Text.secondary)

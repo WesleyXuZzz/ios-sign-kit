@@ -69,7 +69,7 @@ struct DeploymentProcessRecovery: Sendable {
             try commandRunner.run(
                 "/bin/ps",
                 arguments: ["-axo", "pid=,pgid=,command="],
-                timeoutSeconds: 1
+                timeoutSeconds: 3
             )
         }
         recoverMatchingProcesses = { token, acceptsPrefix, shouldTerminate, recordedProcessGroupID in
@@ -181,7 +181,17 @@ struct DeploymentProcessRecovery: Sendable {
     ) -> DeploymentProcessRecoveryOutcome {
         let result: CommandResult
         do {
-            result = try processListProvider()
+            var latest = try processListProvider()
+            // Retry only settled read failures. An unresolved process tree must
+            // keep recovery blocked; starting another command cannot prove it safe.
+            for _ in 1..<3 {
+                guard latest.terminationStatus != 0,
+                      latest.processGroupTerminationWasConfirmed else {
+                    break
+                }
+                latest = try processListProvider()
+            }
+            result = latest
         } catch {
             return .unresolved("无法读取进程表：\(error.localizedDescription)")
         }

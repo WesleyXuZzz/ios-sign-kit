@@ -630,9 +630,33 @@ struct AppStatePersistenceTests {
         #expect(result.state.lastResult == .interrupted)
         #expect(
             result.state.lastErrorSummary?
-                .contains("缺少精确持久化令牌") == true
+                .contains("无法确认是否存在遗留续签进程") == true
         )
         #expect(store.loadState() == result.state)
+    }
+
+    @Test
+    @MainActor
+    func processScanTimeoutDoesNotClaimAnOrphanAndNextStartupClearsBlock() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-sign-kit-recovery-timeout-\(UUID().uuidString)")
+        let store = RefreshStateStore(appSupportDirectory: directory)
+        var state = AppState.default
+        state.currentDeviceStatus = .offline
+        try store.saveState(state)
+        let blocked = AppBootstrapper(
+            stateStore: store,
+            deploymentPrefixRecoveryOutcome: .unresolved("读取进程表失败：timeout")
+        ).bootstrap()
+        #expect(blocked.state.deploymentRecoveryBlocked)
+        #expect(blocked.state.lastErrorSummary?.contains("发现") == false)
+        let recovered = AppBootstrapper(
+            stateStore: store,
+            deploymentPrefixRecoveryOutcome: .notFound
+        ).bootstrap()
+        #expect(!recovered.state.processRecoveryBlocked)
+        #expect(recovered.state.currentDeviceStatus == .offline)
+        #expect(store.loadState() == recovered.state)
     }
 
     @Test

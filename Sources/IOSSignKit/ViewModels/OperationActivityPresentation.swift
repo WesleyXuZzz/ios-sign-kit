@@ -69,7 +69,8 @@ struct OperationActivityPresentation: Equatable {
                 kind: .failure,
                 source: .currentActivity,
                 title: "续签已阻止",
-                detail: feedback ?? lastError ?? "未能确认续签进程已经结束。",
+                detail: (lastError ?? "未能确认续签进程已经结束。")
+                    + " 请重启 iOSSignKit 重新核验，核验通过后才会恢复续签。",
                 tone: .critical,
                 systemImage: "exclamationmark.octagon.fill",
                 progress: nil,

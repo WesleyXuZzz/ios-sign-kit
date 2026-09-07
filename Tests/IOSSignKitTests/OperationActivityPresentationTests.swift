@@ -3,6 +3,29 @@ import Testing
 
 struct OperationActivityPresentationTests {
     @Test
+    func offlineFeedbackCannotReplaceRecoveryFailure() {
+        let reason = "读取进程表失败：Command timed out after 1.0 seconds."
+        let presentation = makePresentation(
+            isProcessRecoveryBlocked: true,
+            feedbackMessage: "固定的目标 iPhone 当前不可用，不会回退到其他设备。",
+            lastResult: .interrupted,
+            lastErrorSummary: reason
+        )
+        #expect(presentation.detail.contains(reason))
+        #expect(!presentation.detail.contains("iPhone 当前不可用"))
+    }
+
+    @Test
+    func recoveryFailureWithoutDiagnosticDoesNotBorrowDeviceFeedback() {
+        let presentation = makePresentation(
+            isProcessRecoveryBlocked: true,
+            feedbackMessage: "固定的目标 iPhone 当前不可用，不会回退到其他设备。"
+        )
+        #expect(presentation.detail.contains("未能确认"))
+        #expect(!presentation.detail.contains("iPhone 当前不可用"))
+    }
+
+    @Test
     func prioritizesProcessRecoveryBlocker() {
         let presentation = makePresentation(
             isReloadingEnvironment: true,
