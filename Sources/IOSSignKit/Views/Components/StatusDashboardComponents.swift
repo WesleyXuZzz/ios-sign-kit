@@ -237,7 +237,7 @@ struct HeroCountdownCard: View {
                             SpacingTokens.HeroCard.statusDetailTopPadding
                         )
 
-                    if showsActionRow {
+                    if showsActionRow && !showsAttentionActionsBelowSummary {
                         actionRow
                             .padding(
                                 .top,
@@ -248,6 +248,11 @@ struct HeroCountdownCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(minHeight: 176)
+
+            if showsAttentionActionsBelowSummary {
+                actionRow
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
 
             Rectangle()
                 .fill(ColorTokens.Border.subtle)
@@ -525,23 +530,14 @@ struct HeroCountdownCard: View {
                 .buttonStyle(RenewalButtonStyle(kind: .secondary))
                 .disabled(firstAction(withID: .recheck)?.isEnabled != true)
             }
-        } else if presentation.phase == .attention,
-                  presentation.header.tone == .critical
-        {
-            VStack(alignment: .leading, spacing: 8) {
-                Button {
-                    onOpenSettings()
-                } label: {
-                    Label("打开设置", systemImage: "gearshape")
+        } else if showsAttentionActionsBelowSummary {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: SpacingTokens.sm) {
+                    attentionActions
                 }
-                .buttonStyle(
-                    RenewalButtonStyle(
-                        kind: .primary,
-                        height: SpacingTokens.ControlHeight.heroPrimary
-                    )
-                )
-
-                actionButton(for: firstAction(withID: .recheck))
+                VStack(alignment: .trailing, spacing: SpacingTokens.sm) {
+                    attentionActions
+                }
             }
         } else {
             VStack(alignment: .leading, spacing: 8) {
@@ -552,9 +548,24 @@ struct HeroCountdownCard: View {
         }
     }
 
+    private var showsAttentionActionsBelowSummary: Bool {
+        presentation.phase == .attention && presentation.header.tone == .critical
+    }
+
+    @ViewBuilder
+    private var attentionActions: some View {
+        Button("打开设置", systemImage: "gearshape") {
+            onOpenSettings()
+        }
+        .buttonStyle(RenewalButtonStyle(kind: .secondary))
+
+        actionButton(for: firstAction(withID: .recheck), kind: .secondary)
+    }
+
     @ViewBuilder
     private func actionButton(
-        for action: PrimaryJourneyAction?
+        for action: PrimaryJourneyAction?,
+        kind: RenewalButtonStyle.Kind? = nil
     ) -> some View {
         if let action {
             Button {
@@ -564,8 +575,8 @@ struct HeroCountdownCard: View {
             }
             .buttonStyle(
                 RenewalButtonStyle(
-                    kind: buttonKind(for: action),
-                    height: action.style == .primary
+                    kind: kind ?? buttonKind(for: action),
+                    height: (kind ?? buttonKind(for: action)) == .primary
                         ? SpacingTokens.ControlHeight.heroPrimary
                         : SpacingTokens.ControlHeight.secondary
                 )
@@ -1146,6 +1157,22 @@ struct ActivityFocusCard: View {
                     }
 
                     Spacer(minLength: 12)
+
+                    if usesFailureActionLayout(task),
+                       let dismiss = task.actions.first(where: { $0.id == .dismissFeedback }) {
+                        Button {
+                            onAction(dismiss)
+                        } label: {
+                            Image(systemName: "xmark")
+                                .frame(width: 28, height: 28)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(ColorTokens.Text.secondary)
+                        .accessibilityLabel(dismiss.title)
+                        .help(dismiss.availability.helpText ?? dismiss.title)
+                        .disabled(!dismiss.isEnabled)
+                    }
                 }
 
                 if !task.detail.isEmpty && task.detail != stageTitle(for: task) {
@@ -1304,28 +1331,58 @@ struct ActivityFocusCard: View {
         }
     }
 
+    private func usesFailureActionLayout(_ task: PrimaryJourneyTask) -> Bool {
+        task.kind == .currentFeedback && task.tone == .critical
+    }
+
     @ViewBuilder
     private func actionButtons(
         _ task: PrimaryJourneyTask
     ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(
-                Self.taskCardActions(task.actions, showsLiveOutput: Self.showsLiveOutput(for: task))
-            ) { action in
-                Button {
-                    onAction(action)
-                } label: {
-                    Label(action.title, systemImage: action.systemImage)
+        let actions = Self.taskCardActions(
+            task.actions, showsLiveOutput: Self.showsLiveOutput(for: task)
+        )
+        if usesFailureActionLayout(task) {
+            let footerActions = actions.filter { $0.id != .dismissFeedback }
+            if !footerActions.isEmpty {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: SpacingTokens.sm) {
+                        ForEach(footerActions) { action in
+                            taskActionButton(action)
+                        }
+                    }
+                    VStack(alignment: .trailing, spacing: SpacingTokens.sm) {
+                        ForEach(footerActions) { action in
+                            taskActionButton(action)
+                        }
+                    }
                 }
-                .buttonStyle(
-                    RenewalButtonStyle(
-                        kind: action.style == .destructive
-                            ? .destructive : action.style == .primary ? .primary : .text
-                    )
-                )
-                .disabled(!action.isEnabled)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.top, SpacingTokens.xs)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(actions) { action in
+                    taskActionButton(action)
+                }
             }
         }
+    }
+
+    private func taskActionButton(_ action: PrimaryJourneyAction) -> some View {
+        Button {
+            onAction(action)
+        } label: {
+            Label(action.title, systemImage: action.systemImage)
+        }
+        .buttonStyle(
+            RenewalButtonStyle(
+                kind: action.style == .destructive
+                    ? .destructive : action.style == .primary ? .primary : .text
+            )
+        )
+        .disabled(!action.isEnabled)
+        .help(action.availability.helpText ?? action.title)
     }
 
     private func resultTone(
