@@ -10,6 +10,7 @@ zmodload zsh/datetime
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$PROJECT_ROOT"
 RELEASE_METADATA_PATH="$PROJECT_ROOT/config/release-metadata.json"
 REQUESTED_BUNDLE_IDENTIFIER="${BUNDLE_IDENTIFIER-}"
 REQUESTED_BUNDLE_VERSION="${BUNDLE_VERSION-}"
@@ -187,8 +188,6 @@ if [[ "$SWIFT_CONFIGURATION" == "release" ]]; then
   SWIFT_BUILD_EXTRA_OPTIONS=(
     "-Xswiftc"
     "-Osize"
-    "-Xswiftc"
-    "-no-whole-module-optimization"
     "-debug-info-format"
     "$RELEASE_DEBUG_INFO_FORMAT"
     "${SWIFT_BUILD_EXTRA_OPTIONS[@]}"
@@ -344,7 +343,9 @@ commit_publication() {
   local COMMITTED_STAGING_ROOT="$STAGING_ROOT"
   local COMMITTED_DMG_SOURCE_ROOT="$DMG_SOURCE_ROOT"
 
-  trap - EXIT HUP INT TERM
+  # Clear rollback state while retaining the top-level exit/signal traps.
+  # Metrics still need the shared lock; a zsh EXIT trap set here would run
+  # at function return rather than at script exit.
   APP_WAS_PUBLISHED="false"
   DMG_WAS_PUBLISHED="false"
   PREVIOUS_ROOT=""
@@ -373,8 +374,6 @@ commit_publication() {
       echo "Warning: committed build, but staging is not empty: $COMMITTED_STAGING_ROOT" >&2
     fi
   fi
-
-  release_build_lock
 }
 
 validate_publication_targets() {
@@ -413,6 +412,7 @@ cleanup_app_icon_compile_directory() {
 
 copy_runtime_resource_bundle() {
   local RESOURCE_FILE_NAME
+  local SOURCE_RESOURCE_DIRECTORY="$RESOURCE_BUNDLE_PATH"
   local SOURCE_RESOURCE_PATH
   local DESTINATION_RESOURCE_PATH
 
@@ -421,9 +421,20 @@ copy_runtime_resource_bundle() {
     return 1
   fi
 
+  # Swift Build emits a macOS bundle; native SwiftPM uses a flat bundle.
+  if [[ -e "$RESOURCE_BUNDLE_PATH/Contents" ]]; then
+    SOURCE_RESOURCE_DIRECTORY="$RESOURCE_BUNDLE_PATH/Contents/Resources"
+    if [[ -L "$RESOURCE_BUNDLE_PATH/Contents" \
+      || ! -d "$SOURCE_RESOURCE_DIRECTORY" \
+      || -L "$SOURCE_RESOURCE_DIRECTORY" ]]; then
+      echo "Invalid runtime resource directory: $SOURCE_RESOURCE_DIRECTORY" >&2
+      return 1
+    fi
+  fi
+
   mkdir -p "$BUNDLED_RESOURCE_PATH"
   for RESOURCE_FILE_NAME in "${RUNTIME_RESOURCE_FILE_NAMES[@]}"; do
-    SOURCE_RESOURCE_PATH="$RESOURCE_BUNDLE_PATH/$RESOURCE_FILE_NAME"
+    SOURCE_RESOURCE_PATH="$SOURCE_RESOURCE_DIRECTORY/$RESOURCE_FILE_NAME"
     DESTINATION_RESOURCE_PATH="$BUNDLED_RESOURCE_PATH/$RESOURCE_FILE_NAME"
     if [[ ! -f "$SOURCE_RESOURCE_PATH" || -L "$SOURCE_RESOURCE_PATH" ]]; then
       echo "Required runtime resource was not found: $SOURCE_RESOURCE_PATH" >&2
@@ -618,6 +629,11 @@ create_dmg() (
   cleanup_dmg
 )
 
+if [[ -e "$OUTPUT_ROOT" || -L "$OUTPUT_ROOT" ]] \
+  && [[ ! -d "$OUTPUT_ROOT" || -L "$OUTPUT_ROOT" ]]; then
+  echo "Refusing unexpected build output directory: $OUTPUT_ROOT" >&2
+  exit 1
+fi
 mkdir -p "$OUTPUT_ROOT"
 
 BUILD_LOCK_PATH="$OUTPUT_ROOT/.build-app.lock"

@@ -122,10 +122,6 @@ struct InstallAppScriptTests {
             at: testRepositoryRoot.appendingPathComponent("scripts/validate-release-metadata.sh"),
             to: scripts.appendingPathComponent("validate-release-metadata.sh")
         )
-        try FileManager.default.copyItem(
-            at: testRepositoryRoot.appendingPathComponent("scripts/validate-build-config.sh"),
-            to: scripts.appendingPathComponent("validate-build-config.sh")
-        )
 
         let metadata: [String: Any] = [
             "appDisplayName": "InstallFixture",

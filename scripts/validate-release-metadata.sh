@@ -31,7 +31,10 @@ MINIMUM_MACOS_VERSION="$(plutil -extract minimumMacOSVersion raw "$METADATA_PATH
   || fail "appDisplayName contains unsupported characters."
 [[ "$EXECUTABLE_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] \
   || fail "executableName contains unsupported characters."
-"${0:A:h}/validate-build-config.sh" "$BUNDLE_IDENTIFIER" "$BUILD_VERSION"
+[[ "$BUNDLE_IDENTIFIER" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ \
+  && "$BUNDLE_IDENTIFIER" != *..* \
+  && "$BUNDLE_IDENTIFIER" != *. ]] \
+  || fail "bundleIdentifier must contain letters, digits, dots, and hyphens without empty segments."
 [[ "$MARKETING_VERSION" =~ ^[0-9]+[.][0-9]+[.][0-9]+$ ]] \
   || fail "marketingVersion must contain three numeric components."
 [[ "$BUILD_VERSION" =~ ^[1-9][0-9]*$ ]] \

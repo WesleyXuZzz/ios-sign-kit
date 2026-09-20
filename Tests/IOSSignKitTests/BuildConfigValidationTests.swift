@@ -116,7 +116,7 @@ struct BuildConfigValidationTests {
     }
 
     @Test
-    func releaseBuildDefaultsToParallelFileCompilationAndSizeOptimization() throws {
+    func releaseBuildUsesSizeOptimizationWithoutDisablingWholeModuleOptimization() throws {
         let script = try String(
             contentsOf: testRepositoryRoot
                 .appendingPathComponent("scripts/build-app.sh"),
@@ -129,18 +129,17 @@ struct BuildConfigValidationTests {
                   SWIFT_BUILD_EXTRA_OPTIONS=(
                     "-Xswiftc"
                     "-Osize"
-                    "-Xswiftc"
-                    "-no-whole-module-optimization"
                 """
             )
         )
+        #expect(!script.contains("-no-whole-module-optimization"))
     }
 
     @Test
     func acceptsValidCustomBundleValues() throws {
         let result = try runValidator(
             bundleIdentifier: "com.example.ios-sign-kit",
-            bundleVersion: "12.3.4"
+            bundleVersion: "12"
         )
 
         #expect(result.status == 0)
@@ -152,8 +151,12 @@ struct BuildConfigValidationTests {
         let invalidCases = [
             ("bad&value", "1"),
             ("com.example..app", "1"),
+            ("com.example.app.", "1"),
+            (".com.example.app", "1"),
             ("com.example.app", "1&2"),
+            ("com.example.app", "1.2.3"),
             ("com.example.app", "1.2.3.4"),
+            ("com.example.app", ""),
             ("", "1")
         ]
 
@@ -171,23 +174,19 @@ struct BuildConfigValidationTests {
         bundleIdentifier: String,
         bundleVersion: String
     ) throws -> (status: Int32, standardError: String) {
-        let process = Process()
-        let errorPipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = [
-            testRepositoryRoot.appendingPathComponent("scripts/validate-build-config.sh").path,
-            bundleIdentifier,
-            bundleVersion
+        let metadataURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-sign-kit-bundle-metadata-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: metadataURL) }
+        let metadata: [String: String] = [
+            "appDisplayName": "InstallFixture",
+            "executableName": "InstallFixture",
+            "bundleIdentifier": bundleIdentifier,
+            "marketingVersion": "1.0.0",
+            "buildVersion": bundleVersion,
+            "minimumMacOSVersion": "14.0",
         ]
-        process.standardOutput = Pipe()
-        process.standardError = errorPipe
-        try process.run()
-        process.waitUntilExit()
-        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-        return (
-            process.terminationStatus,
-            String(decoding: errorData, as: UTF8.self)
-        )
+        try JSONSerialization.data(withJSONObject: metadata).write(to: metadataURL)
+        return try runMetadataValidator(metadataURL)
     }
 
     private func releaseMetadata() throws -> ReleaseMetadataFixture {
