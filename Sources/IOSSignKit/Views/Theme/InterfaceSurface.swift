@@ -5,10 +5,11 @@ import SwiftUI
 struct InterfaceCanvas: View {
     @Environment(\.interfaceStyle) private var style
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
         Group {
-            if style.usesTransparency(reduceTransparency: reduceTransparency) {
+            if style.usesTransparency(reduceTransparency: reduceTransparency) && contrast != .increased {
                 WindowGlassBackground()
             } else if style == .glass {
                 Color(nsColor: .windowBackgroundColor)
@@ -40,13 +41,14 @@ struct InterfaceSurface: ViewModifier {
     @Environment(\.interfaceStyle) private var style
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
 
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: style.cardRadius, style: .continuous)
         content
             .background {
-                if style.usesTransparency(reduceTransparency: reduceTransparency) {
-                    shape.fill(.ultraThinMaterial)
+                if style.usesTransparency(reduceTransparency: reduceTransparency) && contrast != .increased {
+                    shape.fill(emphasized ? .regularMaterial : .thinMaterial)
                 } else {
                     shape.fill(
                         style == .glass
@@ -56,8 +58,9 @@ struct InterfaceSurface: ViewModifier {
             }
             .overlay {
                 shape.strokeBorder(
-                    style == .glass ? ColorTokens.Glass.border : ColorTokens.Border.subtle,
-                    lineWidth: 1
+                    contrast == .increased ? ColorTokens.Border.strong
+                        : (style == .glass ? ColorTokens.Glass.border : ColorTokens.Border.subtle),
+                    lineWidth: contrast == .increased ? 1.5 : 1
                 )
                 .allowsHitTesting(false)
             }

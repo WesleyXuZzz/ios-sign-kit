@@ -318,8 +318,10 @@ ol {
   cursor: pointer;
 }
 
-.icon-button:hover {
-  background: var(--surface-emphasis);
+@media (hover: hover) and (pointer: fine) {
+  .icon-button:hover {
+    background: var(--surface-emphasis);
+  }
 }
 
 .icon-button svg {
@@ -380,11 +382,11 @@ ol {
   font-weight: 600;
   line-height: 1;
   cursor: pointer;
-  transition: transform 120ms ease, background-color 160ms ease, border-color 160ms ease, opacity 160ms ease;
+  transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1), background-color 160ms ease, border-color 160ms ease, opacity 160ms ease;
 }
 
-.button:active {
-  transform: scale(0.985);
+[data-input-method="pointer"] .button:active:not(:disabled) {
+  transform: scale(0.98);
 }
 
 .button:disabled {
@@ -400,9 +402,11 @@ ol {
   background: var(--accent);
 }
 
-.button-primary:hover {
-  border-color: var(--accent-strong);
-  background: var(--accent-strong);
+@media (hover: hover) and (pointer: fine) {
+  .button-primary:hover:not(:disabled) {
+    border-color: var(--accent-strong);
+    background: var(--accent-strong);
+  }
 }
 
 .button-secondary {
@@ -411,8 +415,10 @@ ol {
   background: var(--surface);
 }
 
-.button-secondary:hover {
-  background: var(--surface-emphasis);
+@media (hover: hover) and (pointer: fine) {
+  .button-secondary:hover:not(:disabled) {
+    background: var(--surface-emphasis);
+  }
 }
 
 .text-button {
@@ -427,9 +433,11 @@ ol {
   cursor: pointer;
 }
 
-.text-button:hover {
-  color: var(--text-primary);
-  background: var(--surface-emphasis);
+@media (hover: hover) and (pointer: fine) {
+  .text-button:hover {
+    color: var(--text-primary);
+    background: var(--surface-emphasis);
+  }
 }
 
 .button:focus-visible,
@@ -539,6 +547,7 @@ ol {
   background: var(--surface);
   text-align: left;
   cursor: pointer;
+  transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 .choice-option-primary {
@@ -546,8 +555,8 @@ ol {
   background: var(--accent-soft);
 }
 
-.choice-option:active {
-  transform: scale(0.99);
+[data-input-method="pointer"] .choice-option:active:not(:disabled) {
+  transform: scale(0.98);
 }
 
 .choice-option:disabled {
@@ -861,8 +870,47 @@ ol {
   }
 }
 
+/* Occasional entries only; hiding remains immediate and never delays focus. */
+@media (prefers-reduced-motion: no-preference) {
+  :root:not(.motion-paused)[data-input-method="pointer"] :is(.view-login, .state, .choice-overlay) {
+    opacity: 1;
+    transition: opacity 180ms cubic-bezier(0.23, 1, 0.32, 1);
+  }
+
+  :root:not(.motion-paused)[data-input-method="pointer"] .choice-sheet {
+    transform: none;
+    transition: transform 220ms cubic-bezier(0.23, 1, 0.32, 1);
+  }
+
+  @starting-style {
+    :root:not(.motion-paused)[data-input-method="pointer"] :is(.view-login, .state, .choice-overlay) {
+      opacity: 0;
+    }
+
+    :root:not(.motion-paused)[data-input-method="pointer"] .choice-sheet {
+      transform: translateY(8px);
+    }
+  }
+}
+
 /* ---------- Reduce Motion ---------- */
+.motion-paused .loop-spin,
+.motion-paused .spinner {
+  animation-play-state: paused;
+}
+
+[data-input-method="keyboard"] .button,
+[data-input-method="keyboard"] .choice-option,
+[data-input-method="keyboard"] .password-field {
+  transition: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
+  [data-input-method="pointer"] .button:active:not(:disabled),
+  [data-input-method="pointer"] .choice-option:active:not(:disabled) {
+    transform: none;
+  }
+
   *,
   *::before,
   *::after {

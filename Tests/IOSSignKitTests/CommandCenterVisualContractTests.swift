@@ -6,6 +6,16 @@ import Testing
 
 struct CommandCenterVisualContractTests {
     @Test
+    func interactionMotionExcludesKeyboardAccessibilityAndHoverEvents() {
+        for event: NSEvent.EventType? in [nil, .keyDown, .keyUp, .flagsChanged, .mouseMoved, .scrollWheel] {
+            #expect(!MotionTokens.isPointerInteraction(event))
+        }
+        for event: NSEvent.EventType in [.leftMouseDown, .leftMouseDragged, .leftMouseUp] {
+            #expect(MotionTokens.isPointerInteraction(event))
+        }
+    }
+
+    @Test
     @MainActor
     func liveDeployOutputUsesAReadableBoundedConsole() {
         #expect(
@@ -52,7 +62,6 @@ struct CommandCenterVisualContractTests {
     @Test
     func sidebarRenewalIconUsesDisplayRateMotion() {
         #expect(SidebarBrandIcon.Layout.preferredFrameRate == 60)
-        #expect(SidebarBrandIcon.Layout.reducedMotionFrameRate == 4)
     }
 
     @Test
@@ -142,7 +151,9 @@ struct CommandCenterVisualContractTests {
                 at: later
             )
 
-            #expect(phaseAfterStop.orbit == phaseAtStop.orbit)
+            #expect(phaseAfterStop == phaseAtStop)
+            #expect(idle.pulseDuration == 0)
+            #expect(idle.boltPulseScale == 0)
         }
     }
 
@@ -151,7 +162,7 @@ struct CommandCenterVisualContractTests {
         let profile = RenewalIconMotionProfile.make(
             presentation: RenewalIconPresentation(
                 visualState: .normal,
-                motion: .idle
+                motion: .checking
             )
         )
         let start = Date(timeIntervalSinceReferenceDate: 100)

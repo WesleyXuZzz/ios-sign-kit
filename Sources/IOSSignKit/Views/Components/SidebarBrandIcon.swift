@@ -5,7 +5,6 @@ struct SidebarBrandIcon: View {
     enum Layout {
         static let defaultSize: CGFloat = 64
         static let preferredFrameRate = 60.0
-        static let reducedMotionFrameRate = 4.0
     }
 
     let presentation: RenewalIconPresentation
@@ -40,14 +39,13 @@ struct SidebarBrandIcon: View {
         let profile = RenewalIconMotionProfile.make(
             presentation: presentation
         )
-        let frameRate = accessibilityReduceMotion
-            ? Layout.reducedMotionFrameRate
-            : Layout.preferredFrameRate
+        let shouldAnimate = isAnimationActive && !accessibilityReduceMotion
+            && (profile.orbitDuration > 0 || profile.pulseDuration > 0)
 
         TimelineView(
             .animation(
-                minimumInterval: 1 / frameRate,
-                paused: !isAnimationActive
+                minimumInterval: 1 / Layout.preferredFrameRate,
+                paused: !shouldAnimate
             )
         ) { context in
             SidebarBrandMark(
@@ -62,7 +60,7 @@ struct SidebarBrandIcon: View {
         .onChange(of: profile) { _, newProfile in
             motionState.transition(to: newProfile, at: Date())
         }
-        .onChange(of: isAnimationActive) { wasActive, isActive in
+        .onChange(of: shouldAnimate) { wasActive, isActive in
             let now = Date()
             if isActive {
                 motionState.resume(at: now)

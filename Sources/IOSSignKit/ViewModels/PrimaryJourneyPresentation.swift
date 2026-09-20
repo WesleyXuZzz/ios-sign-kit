@@ -26,6 +26,20 @@ struct PrimaryJourneyHeader: Equatable {
     let expiredDurationText: String?
 }
 
+enum VerificationRecoveryAction: Equatable {
+    case selectDevice
+    case checkProject
+    case diagnostics
+
+    var title: String {
+        switch self {
+        case .selectDevice: "选择设备"
+        case .checkProject: "检查项目配置"
+        case .diagnostics: "查看诊断"
+        }
+    }
+}
+
 struct PrimaryJourneyVerificationStep: Equatable, Identifiable {
     enum ID: Equatable, Hashable {
         case environment
@@ -33,6 +47,7 @@ struct PrimaryJourneyVerificationStep: Equatable, Identifiable {
         case signing
     }
 
+    var recoveryAction: VerificationRecoveryAction? = nil
     let id: ID
     let title: String
     let value: String
@@ -211,6 +226,8 @@ extension PrimaryJourneyPresentation {
         let signingTone = signingStepTone(context: context)
         let verificationSteps = [
             PrimaryJourneyVerificationStep(
+                recoveryAction: context.needsSetup ? .checkProject
+                    : (environmentTone == .warning || environmentTone == .critical ? .diagnostics : nil),
                 id: .environment,
                 title: environmentStepTitle(context: context),
                 value: context.environmentSummary,
@@ -223,10 +240,12 @@ extension PrimaryJourneyPresentation {
                 )
             ),
             PrimaryJourneyVerificationStep(
+                recoveryAction: !context.deviceIsPinned ? .selectDevice
+                    : (!deviceIsOffline && (deviceTone == .warning || deviceTone == .critical) ? .diagnostics : nil),
                 id: .device,
                 title: deviceStepTitle(context: context),
                 value: deviceStepSummary(context: context),
-                detail: nil,
+                detail: deviceIsOffline ? "连接目标 iPhone 后重新检查。" : context.deviceDetail,
                 tone: deviceTone,
                 systemImage: verificationSystemImage(
                     for: .device,
@@ -235,10 +254,13 @@ extension PrimaryJourneyPresentation {
                 )
             ),
             PrimaryJourneyVerificationStep(
+                recoveryAction: !deviceIsOffline && !context.isExpired
+                    && (signingTone == .warning || signingTone == .critical) ? .diagnostics : nil,
                 id: .signing,
                 title: signingStepTitle(context: context),
                 value: signingStepSummary(context: context),
-                detail: nil,
+                detail: deviceIsOffline ? "连接设备后再确认 App 与签名状态。"
+                    : (context.isExpired ? "使用主状态卡中的续签操作更新签名。" : context.expiryDetail),
                 tone: signingTone,
                 systemImage: verificationSystemImage(
                     for: .signing,

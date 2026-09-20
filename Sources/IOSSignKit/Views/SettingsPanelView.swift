@@ -71,16 +71,16 @@ enum SettingsCategoryControlLayout {
 
 struct SettingsPanelView: View {
     @FocusState private var closeButtonFocused: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var viewModel: MenuBarViewModel
     @ObservedObject var setupViewModel: SetupWizardViewModel
     @Binding var selectedCategory: SettingsPanelCategory
-    let onOpenDiagnostics: () -> Void
+    let diagnosticsContent: () -> AnyView
     let initialScrollAnchor: UnitPoint
     @Binding var interfaceStyle: InterfaceStyle
     let onClose: () -> Void
 
     @State private var copiedDiagnosticReport = false
+    @State private var isDiagnosticsPresented = false
     @State private var isRestoreDefaultsConfirmationPresented = false
     @State private var hoveredCategory: SettingsPanelCategory?
     @FocusState private var focusedCategory: SettingsPanelCategory?
@@ -89,7 +89,7 @@ struct SettingsPanelView: View {
         viewModel: MenuBarViewModel,
         setupViewModel: SetupWizardViewModel,
         selectedCategory: Binding<SettingsPanelCategory>,
-        onOpenDiagnostics: @escaping () -> Void,
+        diagnosticsContent: @escaping () -> AnyView,
         initialScrollAnchor: UnitPoint = .top,
         interfaceStyle: Binding<InterfaceStyle> = .constant(.native),
         onClose: @escaping () -> Void = {}
@@ -97,7 +97,7 @@ struct SettingsPanelView: View {
         self.viewModel = viewModel
         self.setupViewModel = setupViewModel
         _selectedCategory = selectedCategory
-        self.onOpenDiagnostics = onOpenDiagnostics
+        self.diagnosticsContent = diagnosticsContent
         self.initialScrollAnchor = initialScrollAnchor
         _interfaceStyle = interfaceStyle
         self.onClose = onClose
@@ -120,10 +120,6 @@ struct SettingsPanelView: View {
                         .zIndex(selectedCategory == category ? 1 : 0)
                 }
             }
-            .animation(
-                reduceMotion ? nil : MotionTokens.easeOut(MotionTokens.fast),
-                value: selectedCategory
-            )
 
             saveBar
         }
@@ -156,7 +152,7 @@ struct SettingsPanelView: View {
             Spacer(minLength: 0)
             categoryPicker
             Spacer(minLength: 0)
-            Button("完成", action: onClose)
+            Button("返回工作台", action: onClose)
                 .buttonStyle(RenewalButtonStyle(kind: .secondary))
                 .keyboardShortcut(.cancelAction)
                 .focused($closeButtonFocused)
@@ -360,6 +356,9 @@ struct SettingsPanelView: View {
                 issuePairingURL: viewModel.issueLANControlPairingURL
             )
         case .general:
+            Label("此分类的偏好设置自动保存", systemImage: "checkmark.circle")
+                .font(TypeTokens.caption)
+                .foregroundStyle(ColorTokens.Text.secondary)
             SettingsSectionCard(title: "界面风格", systemImage: "paintpalette") {
                 interfaceStyleSection
             }
@@ -449,7 +448,7 @@ struct SettingsPanelView: View {
             if let error = setupViewModel.deviceSelectionErrorMessage {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
                     .font(TypeTokens.caption)
-                    .foregroundStyle(ColorTokens.Semantic.critical)
+                    .foregroundStyle(ColorTokens.Semantic.criticalText)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -734,7 +733,7 @@ struct SettingsPanelView: View {
             if case .failed(let message) = setupViewModel.reminderSettingsSaveState {
                 Label(message, systemImage: "exclamationmark.circle.fill")
                     .font(TypeTokens.caption)
-                    .foregroundStyle(ColorTokens.Semantic.critical)
+                    .foregroundStyle(ColorTokens.Semantic.criticalText)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -817,7 +816,7 @@ struct SettingsPanelView: View {
             if let error = viewModel.launchAtLoginUpdateError {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
                     .font(TypeTokens.caption)
-                    .foregroundStyle(ColorTokens.Semantic.critical)
+                    .foregroundStyle(ColorTokens.Semantic.criticalText)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -840,9 +839,10 @@ struct SettingsPanelView: View {
                 Spacer(minLength: 0)
 
                 Button("查看诊断") {
-                    onOpenDiagnostics()
+                    isDiagnosticsPresented.toggle()
                 }
                 .buttonStyle(RenewalButtonStyle(kind: .secondary))
+                .popover(isPresented: $isDiagnosticsPresented) { diagnosticsContent() }
 
                 Button(copiedDiagnosticReport ? "已复制" : "复制诊断报告") {
                     copyDiagnosticReport()
@@ -851,6 +851,15 @@ struct SettingsPanelView: View {
             }
         }
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var unsavedChangesSummary: String {
+        let names: [String] = [
+            setupViewModel.hasUnsavedTargetChanges ? "目标" : nil,
+            setupViewModel.hasUnsavedRenewalChanges ? "续期" : nil,
+            setupViewModel.hasUnsavedLANControlChanges ? "局域网" : nil
+        ].compactMap { $0 }
+        return names.isEmpty ? "有未存储的更改" : "未存储：" + names.joined(separator: "、")
     }
 
     private var saveBar: some View {
@@ -871,11 +880,11 @@ struct SettingsPanelView: View {
                     Circle()
                         .fill(ColorTokens.Semantic.warning)
                         .frame(width: 7, height: 7)
-                    Text("有未存储的更改")
+                    Text(unsavedChangesSummary)
                         .font(TypeTokens.caption)
-                        .foregroundStyle(ColorTokens.Semantic.warning)
+                        .foregroundStyle(ColorTokens.Semantic.warningText)
                 }
-                .accessibilityLabel("有未存储的更改")
+                .accessibilityLabel(unsavedChangesSummary)
             }
 
             Button {

@@ -372,15 +372,15 @@ struct RenewalRingViewTests {
     }
 
     @Test
-    func waterResultTransitionMatchesTheApprovedTimeline() {
+    func waterResultRevealsWhileDrainingWithinInteractionBudget() {
         let startLevel = 0.56
         let startRotation = 260.0
         let targetFraction = 2.0 / 7.0
         let duration = RenewalWaterResultTransitionSpecification
             .drainDuration(from: startLevel, reducesMotion: false)
 
-        #expect(duration >= 0.80)
-        #expect(duration <= 1.24)
+        #expect(duration >= 0.18)
+        #expect(duration <= 0.24)
 
         let start = RenewalWaterResultTransitionSpecification.frame(
             at: 0,
@@ -430,7 +430,7 @@ struct RenewalRingViewTests {
                     <= drainingFrames[index - 1].amplitudeScale
             )
         }
-        #expect(drainingFrames.allSatisfy { $0.resultOpacity == 0 })
+        #expect(drainingFrames.dropFirst().allSatisfy { $0.resultOpacity > 0 })
 
         let drained = drainingFrames[drainingFrames.count - 1]
         #expect(drained.waterLevel == 0)
@@ -440,9 +440,7 @@ struct RenewalRingViewTests {
         #expect(abs(drained.ringRotation - 270) < 0.000_001)
 
         let revealed = RenewalWaterResultTransitionSpecification.frame(
-            at: duration
-                + RenewalWaterResultTransitionSpecification
-                    .resultRevealDuration,
+            at: 0.26,
             startLevel: startLevel,
             activeElapsed: 3.2,
             startRingRotation: startRotation,
@@ -466,7 +464,7 @@ struct RenewalRingViewTests {
     }
 
     @Test
-    func reducedMotionFadesWaterInPlaceBeforeShowingTheResult() {
+    func reducedMotionFadesWaterAndResultTogether() {
         let startLevel = 0.52
         let drainDuration = RenewalWaterResultTransitionSpecification
             .reducedMotionDrainDuration
@@ -481,7 +479,7 @@ struct RenewalRingViewTests {
 
         #expect(midpoint.waterLevel == startLevel)
         #expect(abs(midpoint.waterOpacity - 0.5) < 0.000_001)
-        #expect(midpoint.resultOpacity == 0)
+        #expect(abs(midpoint.resultOpacity - 0.5) < 0.000_001)
         #expect(midpoint.resultScale == 1)
 
         let drained = RenewalWaterResultTransitionSpecification.frame(
@@ -493,12 +491,10 @@ struct RenewalRingViewTests {
             reducesMotion: true
         )
         #expect(drained.waterLevel == 0)
-        #expect(drained.resultOpacity == 0)
+        #expect(drained.resultOpacity == 1)
 
         let complete = RenewalWaterResultTransitionSpecification.frame(
-            at: drainDuration
-                + RenewalWaterResultTransitionSpecification
-                    .reducedMotionResultRevealDuration,
+            at: drainDuration,
             startLevel: startLevel,
             activeElapsed: 0,
             startRingRotation: -90,
@@ -507,6 +503,27 @@ struct RenewalRingViewTests {
         )
         #expect(complete.resultOpacity == 1)
         #expect(complete.isComplete)
+    }
+
+    @Test(arguments: [0.0, 0.05, 0.52, 0.95, 1.0])
+    func resultFeedbackNeverWaitsForWaterToDrain(level: Double) {
+        for reduced in [false, true] {
+            func frame(at elapsed: TimeInterval) -> RenewalWaterResultTransitionFrame {
+                RenewalWaterResultTransitionSpecification.frame(
+                    at: elapsed,
+                    startLevel: level,
+                    activeElapsed: 3,
+                    startRingRotation: 260,
+                    targetRingFraction: 0.4,
+                    reducesMotion: reduced
+                )
+            }
+            #expect(frame(at: 0.05).resultOpacity > 0)
+            #expect(!frame(at: 0.05).isComplete)
+            #expect(frame(at: 0.26).isComplete)
+            #expect(frame(at: 0.26).resultOpacity == 1)
+            #expect(frame(at: 0.26).waterOpacity == 0)
+        }
     }
 
     @Test

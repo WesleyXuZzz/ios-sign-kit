@@ -477,6 +477,26 @@ final class SetupWizardViewModel: ObservableObject {
             || !lanControlPasswordConfirmation.isEmpty
     }
 
+    var hasUnsavedTargetChanges: Bool {
+        let draft = makeConfig()
+        return draft.projectRootPath != lastPersistedConfig.projectRootPath
+            || draft.xcodeprojPath != lastPersistedConfig.xcodeprojPath
+            || draft.scheme != lastPersistedConfig.scheme
+            || draft.targetName != lastPersistedConfig.targetName
+            || draft.bundleID != lastPersistedConfig.bundleID
+            || draft.applicationTargetResolutionSchemaVersion != lastPersistedConfig.applicationTargetResolutionSchemaVersion
+            || draft.preferredDeviceID != lastPersistedConfig.preferredDeviceID
+            || draft.preferredDeviceName != lastPersistedConfig.preferredDeviceName
+    }
+
+    var hasUnsavedRenewalChanges: Bool {
+        let draft = makeConfig()
+        return draft.checkIntervalMinutes != lastPersistedConfig.checkIntervalMinutes
+            || draft.expiredCheckIntervalMinutes != lastPersistedConfig.expiredCheckIntervalMinutes
+            || draft.reminderCooldownHours != lastPersistedConfig.reminderCooldownHours
+            || draft.autoRefreshPolicy != lastPersistedConfig.autoRefreshPolicy
+    }
+
     var isDeviceDetectionReadOnly: Bool {
         deviceDetectionRolloutMode == .readOnly
     }

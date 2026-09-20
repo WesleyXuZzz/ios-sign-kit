@@ -433,7 +433,10 @@ struct HeroCountdownCard: View {
         }
         .font(metricFont)
         .foregroundStyle(ColorTokens.Semantic.warningText)
-        .animation(MotionTokens.easeOut(0.18), value: metricValue)
+        .animation(
+            reduceMotion || !isAnimationActive ? nil : MotionTokens.easeOut(0.18),
+            value: metricValue
+        )
     }
 
     private var deviceRow: some View {
@@ -971,6 +974,8 @@ struct EnvironmentTrackRow: View {
 
     let steps: [PrimaryJourneyVerificationStep]
     let onFix: (PrimaryJourneyVerificationStep.ID) -> Void
+    let diagnosticsContent: () -> AnyView
+    @State private var diagnosticStep: PrimaryJourneyVerificationStep.ID?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1003,36 +1008,38 @@ struct EnvironmentTrackRow: View {
                         .lineLimit(1)
 
                     Text(step.value)
-                        .font(.system(size: 11))
+                        .font(TypeTokens.caption)
                         .foregroundStyle(ColorTokens.Text.secondary)
-                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
-            if showsSettingsAction(for: step) {
-                Button("打开设置 ›") {
-                    onFix(step.id)
+            if let detail = step.detail, detail != step.value, !detail.isEmpty {
+                Text(detail)
+                    .font(TypeTokens.caption)
+                    .foregroundStyle(ColorTokens.Text.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 32)
+            }
+            if let action = step.recoveryAction {
+                Button(action.title) {
+                    if action == .diagnostics {
+                        diagnosticStep = step.id
+                    } else {
+                        onFix(step.id)
+                    }
                 }
                 .buttonStyle(RenewalButtonStyle(kind: .text))
-                .font(.system(size: 11, weight: .medium))
                 .padding(.leading, 32)
+                .popover(isPresented: Binding(
+                    get: { diagnosticStep == step.id },
+                    set: { if !$0 { diagnosticStep = nil } }
+                )) { diagnosticsContent() }
             }
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(title(for: step))
-        .accessibilityValue("\(step.value)，\(toneText(step.tone))")
-    }
-
-    private func showsSettingsAction(
-        for step: PrimaryJourneyVerificationStep
-    ) -> Bool {
-        if step.id == .device,
-           step.tone == .neutral,
-           step.systemImage == "minus" {
-            return true
-        }
-        return step.tone == .warning || step.tone == .critical
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(title(for: step))，\(toneText(step.tone))")
     }
 
     private func statusDot(
@@ -1143,7 +1150,7 @@ struct ActivityFocusCard: View {
                 HStack(alignment: .top, spacing: 12) {
                     Image(systemName: task.systemImage)
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(task.tone.color)
+                        .foregroundStyle(task.tone.textColor)
                         .frame(width: 24, height: 24)
                         .accessibilityHidden(true)
 
@@ -1437,12 +1444,15 @@ private struct IndeterminateRenewalProgressBar: View {
     let tone: StatusTone
     let isAnimationActive: Bool
     let reduceMotion: Bool
+    @State private var motionClock = RenewalRingMotionClock()
+
+    private var shouldAnimate: Bool { isAnimationActive && !reduceMotion }
 
     var body: some View {
         TimelineView(
             .animation(
                 minimumInterval: reduceMotion ? 0.25 : 1 / 30,
-                paused: reduceMotion || !isAnimationActive
+                paused: !shouldAnimate
             )
         ) { context in
             GeometryReader { proxy in
@@ -1475,10 +1485,19 @@ private struct IndeterminateRenewalProgressBar: View {
         }
         .frame(height: 4)
         .accessibilityHidden(true)
+        .onAppear {
+            motionClock.setActive(shouldAnimate, at: Date())
+        }
+        .onChange(of: shouldAnimate) { _, isActive in
+            motionClock.setActive(isActive, at: Date())
+        }
+        .onDisappear {
+            motionClock.setActive(false, at: Date())
+        }
     }
 
     private func shimmerOffset(width: CGFloat, at date: Date) -> CGFloat {
-        let phase = date.timeIntervalSinceReferenceDate
+        let phase = motionClock.elapsed(at: date)
             .truncatingRemainder(dividingBy: 1.2) / 1.2
         let shimmerWidth = max(width * 0.42, 80)
         return -shimmerWidth + ((width + shimmerWidth) * phase)

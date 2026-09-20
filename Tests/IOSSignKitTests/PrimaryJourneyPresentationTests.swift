@@ -5,6 +5,22 @@ import Testing
 struct PrimaryJourneyPresentationTests {
     @Test
     @MainActor
+    func recoveryLinksDistinguishSetupFromOfflineTargets() {
+        let viewModel = makePrimaryJourneyViewModel()
+        defer { viewModel.stopPolling() }
+        let initial = viewModel.primaryJourneyPresentation
+        #expect(initial.verificationSteps.first { $0.id == .environment }?.recoveryAction == .checkProject)
+        #expect(initial.verificationSteps.first { $0.id == .device }?.recoveryAction == .selectDevice)
+        viewModel.config = makeResolvedPrimaryJourneyConfig()
+        viewModel.environmentStatus = makeReadyPrimaryJourneyEnvironment()
+        viewModel.config.preferredDeviceID = "test-pinned-device"
+        let configured = viewModel.primaryJourneyPresentation
+        #expect(configured.verificationSteps.first { $0.id == .environment }?.recoveryAction == nil)
+        #expect(configured.verificationSteps.first { $0.id == .device }?.recoveryAction != .selectDevice)
+    }
+
+    @Test
+    @MainActor
     func checkingDisablesBothHeaderActions() {
         let viewModel = makePrimaryJourneyViewModel()
         defer { viewModel.stopPolling() }
@@ -393,7 +409,9 @@ struct PrimaryJourneyPresentationTests {
                 .components(separatedBy: "\n").count == 2
         )
         #expect(presentation.targetDevice.badgeSystemImage == "wifi.slash")
-        #expect(presentation.verificationSteps.allSatisfy { $0.detail == nil })
+        #expect(deviceStep?.detail == "连接目标 iPhone 后重新检查。")
+        #expect(deviceStep?.recoveryAction == nil)
+        #expect(signingStep?.recoveryAction == nil)
 
         let pairingAction = presentation.headerActions.first {
             $0.id == .pairDevice

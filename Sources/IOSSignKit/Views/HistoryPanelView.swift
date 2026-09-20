@@ -6,8 +6,6 @@ struct HistoryPanelView: View {
     let onBackToStatus: () -> Void
     var selectedEntryID: String? = nil
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
     @State private var selectedFilter: Filter = .all
 
     enum Filter: String, CaseIterable, Identifiable {
@@ -71,9 +69,7 @@ struct HistoryPanelView: View {
             HStack(spacing: SpacingTokens.xs) {
                 ForEach(Filter.allCases) { filter in
                     Button(filter.rawValue) {
-                        withAnimation(reduceMotion ? nil : MotionTokens.easeOut()) {
-                            selectedFilter = filter
-                        }
+                        selectedFilter = filter
                     }
                     .buttonStyle(HistoryFilterButtonStyle(isSelected: selectedFilter == filter))
                 }
@@ -315,6 +311,7 @@ struct HistoryResultRingPresentation: Equatable {
 }
 
 struct HistoryTimelineRow: View {
+    @Environment(\.interfaceStyle) private var interfaceStyle
     let entry: RefreshHistoryEntry
     let dateGroup: HistoryDateGroup
     let onOpen: () -> Void
@@ -337,7 +334,10 @@ struct HistoryTimelineRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                withAnimation(reduceMotion ? nil : MotionTokens.easeOut()) {
+                withAnimation(MotionTokens.interactionAnimation(
+                    reduceMotion: reduceMotion,
+                    duration: isExpanded ? 0.12 : 0.18
+                )) {
                     isExpanded.toggle()
                 }
             } label: {
@@ -420,14 +420,11 @@ struct HistoryTimelineRow: View {
             }
         }
         .interfaceSurface()
-        .shadow(
-            color: .black.opacity(isHovering ? 0.08 : 0),
-            radius: isHovering ? 7 : 0,
-            x: 0,
-            y: isHovering ? 4 : 0
-        )
-        .offset(x: isHovering && !reduceMotion ? 3 : 0)
-        .animation(reduceMotion ? nil : MotionTokens.easeOut(), value: isHovering)
+        .overlay {
+            RoundedRectangle(cornerRadius: interfaceStyle.cardRadius, style: .continuous)
+                .fill(ColorTokens.Text.primary.opacity(isHovering ? 0.025 : 0))
+                .allowsHitTesting(false)
+        }
         .onHover { isHovering = $0 }
     }
 

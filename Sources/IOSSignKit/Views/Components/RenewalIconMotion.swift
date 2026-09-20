@@ -13,8 +13,8 @@ struct RenewalIconMotionProfile: Equatable {
         case .idle:
             profile(
                 orbitDuration: 0,
-                pulseDuration: 3.2,
-                boltPulseScale: 0.010
+                pulseDuration: 0,
+                boltPulseScale: 0
             )
         case .checking:
             profile(

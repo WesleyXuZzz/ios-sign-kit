@@ -658,7 +658,7 @@ struct RenewalRingView: View {
     }
 
     private var fractionAnimation: Animation? {
-        reduceMotion || motion == .countdown
+        reduceMotion || !isAnimationActive || motion == .countdown
             ? nil
             : MotionTokens.spring
     }

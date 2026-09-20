@@ -53,7 +53,6 @@ struct NumberStepper: View {
     @State private var valueBeforeEditing = 0
     @FocusState private var isControlFocused: Bool
     @FocusState private var isEditorFocused: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var policy: NumberStepperValuePolicy {
         NumberStepperValuePolicy(min: min, max: max, step: step)
@@ -104,10 +103,6 @@ struct NumberStepper: View {
         }
         .opacity(isDisabled ? 0.55 : 1)
         .allowsHitTesting(!isDisabled)
-        .animation(
-            reduceMotion ? nil : MotionTokens.easeOut(0.20),
-            value: isDisabled
-        )
         .onAppear {
             value = policy.clamped(value)
             syncDraftWithValue()
@@ -173,18 +168,10 @@ struct NumberStepper: View {
         } else {
             Button(action: beginEditing) {
                 VStack(spacing: 1) {
-                    ZStack {
-                        Text("\(value)")
-                            .id(value)
-                            .transition(.opacity)
-                    }
-                    .font(.system(size: 15, weight: .semibold))
-                    .monospacedDigit()
-                    .foregroundStyle(ColorTokens.Text.primary)
-                    .animation(
-                        reduceMotion ? nil : MotionTokens.easeOut(0.18),
-                        value: value
-                    )
+                    Text("\(value)")
+                        .font(.system(size: 15, weight: .semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(ColorTokens.Text.primary)
 
                     unitLabel
                 }
@@ -326,6 +313,7 @@ private struct NumberStepperAdjustmentButton: View {
 }
 
 private struct NumberStepperAdjustmentButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let isHovered: Bool
     let isEnabled: Bool
 
@@ -335,9 +323,16 @@ private struct NumberStepperAdjustmentButtonStyle: ButtonStyle {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .fill(backgroundColor(isPressed: configuration.isPressed))
             )
-            .scaleEffect(configuration.isPressed && isEnabled ? 0.9 : 1)
+            .scaleEffect(
+                configuration.isPressed && isEnabled
+                    && MotionTokens.interactionAnimation(reduceMotion: reduceMotion) != nil
+                    ? 0.97 : 1
+            )
             .animation(
-                MotionTokens.easeOut(0.12),
+                MotionTokens.interactionAnimation(
+                    reduceMotion: reduceMotion,
+                    duration: configuration.isPressed ? 0.12 : 0.10
+                ),
                 value: configuration.isPressed
             )
     }

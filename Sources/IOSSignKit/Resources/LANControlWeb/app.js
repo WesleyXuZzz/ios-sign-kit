@@ -63,6 +63,8 @@ let latestSnapshot = null;
 let enteredByPairing = false;
 let profileChoiceSubmitting = false;
 let profileChoiceReturnFocus = null;
+let visibleState = null;
+let renderedStagesKey = null;
 
 function sessionToken() {
   return sessionStorage.getItem(SESSION_KEY);
@@ -136,6 +138,7 @@ function setLoginError(message) {
 
 function showLogin(message = "") {
   stopPolling();
+  visibleState = null;
   closeProfileChoice({ restoreFocus: false });
   elements.appHeader.hidden = true;
   elements.viewControl.hidden = true;
@@ -143,7 +146,7 @@ function showLogin(message = "") {
   elements.pairedNotice.hidden = true;
   elements.password.value = "";
   setLoginError(message);
-  window.setTimeout(() => elements.password.focus(), 80);
+  elements.password.focus({ preventScroll: true });
 }
 
 function showControl() {
@@ -155,12 +158,14 @@ function showControl() {
 }
 
 function showState(name, focusSelector) {
+  const didChange = visibleState !== name;
+  visibleState = name;
   for (const [key, node] of Object.entries(elements.states)) {
     node.hidden = key !== name;
   }
-  if (focusSelector) {
+  if (didChange && focusSelector && elements.profileChoice.hidden) {
     const target = elements.states[name].querySelector(focusSelector);
-    if (target) window.setTimeout(() => target.focus(), 60);
+    if (target) target.focus({ preventScroll: true });
   }
 }
 
@@ -168,6 +173,9 @@ function renderStages(snapshot) {
   const phaseIndex = Number.isInteger(snapshot.phaseIndex)
     ? snapshot.phaseIndex
     : 0;
+  const stagesKey = JSON.stringify([snapshot.phases, phaseIndex]);
+  if (stagesKey === renderedStagesKey) return;
+  renderedStagesKey = stagesKey;
   elements.stageList.replaceChildren();
   snapshot.phases.forEach((phase, index) => {
     const item = document.createElement("li");
@@ -339,13 +347,15 @@ function setProfileChoiceSubmitting(isSubmitting) {
 }
 
 function openProfileChoice(message) {
-  profileChoiceReturnFocus = document.activeElement;
+  if (elements.profileChoice.hidden) {
+    profileChoiceReturnFocus = document.activeElement;
+  }
   elements.profileChoiceMessage.textContent = message;
   elements.profileChoice.hidden = false;
   document.body.classList.add("modal-open");
   setProfileChoiceSubmitting(false);
   announce("请选择本次签名策略。");
-  window.setTimeout(() => elements.profileForce.focus(), 60);
+  elements.profileForce.focus({ preventScroll: true });
 }
 
 function closeProfileChoice({ restoreFocus = true } = {}) {
@@ -354,7 +364,7 @@ function closeProfileChoice({ restoreFocus = true } = {}) {
   document.body.classList.remove("modal-open");
   setProfileChoiceSubmitting(false);
   if (restoreFocus && profileChoiceReturnFocus?.isConnected) {
-    profileChoiceReturnFocus.focus();
+    profileChoiceReturnFocus.focus({ preventScroll: true });
   }
   profileChoiceReturnFocus = null;
 }
@@ -467,6 +477,21 @@ elements.profileChoice.addEventListener("click", (event) => {
   }
 });
 elements.profileChoiceSheet.addEventListener("keydown", handleProfileChoiceKeydown);
+
+// Keep pointer feedback separate from keyboard activation, including Space presses.
+document.documentElement.dataset.inputMethod = "keyboard";
+document.addEventListener("pointerdown", () => {
+  document.documentElement.dataset.inputMethod = "pointer";
+}, { capture: true, passive: true });
+document.addEventListener("keydown", () => {
+  document.documentElement.dataset.inputMethod = "keyboard";
+}, { capture: true });
+
+function updateMotionVisibility() {
+  document.documentElement.classList.toggle("motion-paused", document.hidden);
+}
+document.addEventListener("visibilitychange", updateMotionVisibility);
+updateMotionVisibility();
 
 if (pairingToken) {
   consumePairingToken(pairingToken);

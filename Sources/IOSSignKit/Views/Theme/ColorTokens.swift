@@ -22,15 +22,35 @@ enum StatusTone: Equatable {
             ColorTokens.Semantic.offline
         }
     }
+
+    var textColor: Color {
+        switch self {
+        case .good: ColorTokens.Semantic.successText
+        case .warning: ColorTokens.Semantic.warningText
+        case .critical: ColorTokens.Semantic.criticalText
+        case .info: ColorTokens.Accent.text
+        case .neutral: ColorTokens.Semantic.neutralText
+        }
+    }
+
 }
 
 /// Renewal Loop 的颜色系统。所有新视图只通过这里读取颜色，避免同一语义在不同组件中漂移。
 enum ColorTokens {
-    private static func dynamic(light: NSColor, dark: NSColor) -> Color {
+    private static func dynamic(
+        light: NSColor, dark: NSColor,
+        highContrastLight: NSColor? = nil, highContrastDark: NSColor? = nil
+    ) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-                ? dark
-                : light
+            switch appearance.bestMatch(from: [
+                .accessibilityHighContrastDarkAqua, .accessibilityHighContrastAqua,
+                .darkAqua, .aqua
+            ]) {
+            case .accessibilityHighContrastDarkAqua: highContrastDark ?? dark
+            case .accessibilityHighContrastAqua: highContrastLight ?? light
+            case .darkAqua: dark
+            default: light
+            }
         })
     }
 
@@ -66,11 +86,13 @@ enum ColorTokens {
     enum Border {
         static let subtle = ColorTokens.dynamic(
             light: ColorTokens.rgb(0, 0, 0, 0.07),
-            dark: ColorTokens.rgb(255, 255, 255, 0.10)
+            dark: ColorTokens.rgb(255, 255, 255, 0.10),
+            highContrastLight: .darkGray, highContrastDark: .lightGray
         )
         static let strong = ColorTokens.dynamic(
             light: ColorTokens.rgb(0, 0, 0, 0.14),
-            dark: ColorTokens.rgb(255, 255, 255, 0.18)
+            dark: ColorTokens.rgb(255, 255, 255, 0.18),
+            highContrastLight: .darkGray, highContrastDark: .lightGray
         )
     }
 
@@ -81,15 +103,21 @@ enum ColorTokens {
         )
         static let secondary = ColorTokens.dynamic(
             light: ColorTokens.rgb(110, 110, 115),
-            dark: ColorTokens.rgb(152, 152, 157)
+            dark: ColorTokens.rgb(152, 152, 157),
+            highContrastLight: ColorTokens.rgb(60, 60, 65),
+            highContrastDark: ColorTokens.rgb(220, 220, 225)
         )
         static let tertiary = ColorTokens.dynamic(
             light: ColorTokens.rgb(174, 174, 178),
-            dark: ColorTokens.rgb(99, 99, 102)
+            dark: ColorTokens.rgb(99, 99, 102),
+            highContrastLight: .darkGray, highContrastDark: .lightGray
         )
     }
 
     enum Accent {
+        static let text = ColorTokens.dynamic(
+            light: ColorTokens.rgb(0, 92, 190), dark: ColorTokens.rgb(110, 180, 255)
+        )
         static let renew = ColorTokens.dynamic(
             light: ColorTokens.rgb(10, 132, 255),
             dark: ColorTokens.rgb(76, 157, 255)
@@ -133,15 +161,19 @@ enum ColorTokens {
             dark: ColorTokens.rgb(152, 152, 157)
         )
         static let warningText = ColorTokens.dynamic(
-            light: ColorTokens.rgb(178, 94, 0),
+            light: ColorTokens.rgb(154, 79, 0),
             dark: ColorTokens.rgb(255, 159, 10)
         )
         static let criticalText = ColorTokens.dynamic(
-            light: ColorTokens.rgb(193, 39, 31),
-            dark: ColorTokens.rgb(255, 69, 58)
+            light: ColorTokens.rgb(170, 30, 25),
+            dark: ColorTokens.rgb(255, 125, 118)
+        )
+        static let neutralText = ColorTokens.dynamic(
+            light: ColorTokens.rgb(80, 80, 85),
+            dark: ColorTokens.rgb(190, 190, 195)
         )
         static let successText = ColorTokens.dynamic(
-            light: ColorTokens.rgb(31, 138, 61),
+            light: ColorTokens.rgb(24, 118, 50),
             dark: ColorTokens.rgb(48, 209, 88)
         )
     }

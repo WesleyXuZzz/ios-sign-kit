@@ -17,6 +17,8 @@ struct ExpiryCommandCenterView: View {
     let deployLogText: String
     let onAction: (PrimaryJourneyAction) -> Void
     let onDeviceSelectionRequested: () -> Void
+    let onRenewalSettingsRequested: () -> Void
+    let diagnosticsContent: () -> AnyView
     var isAnimationActive = true
     var config: AppConfig = .default
     var availableWidth: CGFloat = 872
@@ -45,7 +47,8 @@ struct ExpiryCommandCenterView: View {
             VStack(alignment: .leading, spacing: SpacingTokens.sm) {
                 EnvironmentTrackRow(
                     steps: presentation.verificationSteps,
-                    onFix: { _ in onDeviceSelectionRequested() }
+                    onFix: { _ in onDeviceSelectionRequested() },
+                    diagnosticsContent: diagnosticsContent
                 )
                 if let task = presentation.currentTask, ActivityFocusCard.showsLiveOutput(for: task)
                 {
@@ -55,7 +58,7 @@ struct ExpiryCommandCenterView: View {
                         }
                     }
                 } else {
-                    RenewalPolicySummaryCard(config: config)
+                    RenewalPolicySummaryCard(config: config, onOpenSettings: onRenewalSettingsRequested)
                         .frame(maxHeight: .infinity, alignment: .topLeading)
                 }
             }
@@ -75,6 +78,7 @@ struct ExpiryCommandCenterView: View {
 
 struct RenewalPolicySummaryCard: View {
     let config: AppConfig
+    let onOpenSettings: () -> Void
 
     static func summary(for config: AppConfig) -> String {
         let policy = config.autoRefreshPolicy == .reminderOnly ? "到期时提醒" : "到期时自动刷新"
@@ -87,10 +91,12 @@ struct RenewalPolicySummaryCard: View {
             Label("续期策略", systemImage: "clock")
                 .font(TypeTokens.cardTitle)
                 .foregroundStyle(ColorTokens.Text.primary)
-            Text(Self.summary(for: config))
-                .font(TypeTokens.caption)
-                .foregroundStyle(ColorTokens.Text.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            Text(config.autoRefreshPolicy == .reminderOnly ? "到期时提醒" : "到期时自动刷新")
+                .font(TypeTokens.cardTitle)
+                .foregroundStyle(ColorTokens.Text.primary)
+            policyRow("到期前检查", value: "每 \(config.checkIntervalMinutes) 分钟")
+            policyRow("到期后检查", value: "每 \(config.expiredCheckIntervalMinutes) 分钟")
+            policyRow("提醒冷却", value: "\(config.reminderCooldownHours) 小时")
             if config.autoRefreshPolicy == .autoRefreshWhenExpired {
                 Text("确认 App 已安装且签名到期后，等待设备解锁与 Xcode 就绪，再复核并续签。")
                     .font(TypeTokens.caption)
@@ -98,12 +104,20 @@ struct RenewalPolicySummaryCard: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 20)
-            Text("续签进行中时，这里会切换为实时输出。")
-                .font(TypeTokens.auxiliary)
-                .foregroundStyle(ColorTokens.Text.secondary)
+            Button("调整续期策略", systemImage: "slider.horizontal.3", action: onOpenSettings)
+                .buttonStyle(RenewalButtonStyle(kind: .text))
         }
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .interfaceSurface()
+    }
+    private func policyRow(_ title: String, value: String) -> some View {
+        HStack {
+            Text(title).foregroundStyle(ColorTokens.Text.secondary)
+            Spacer(minLength: 8)
+            Text(value).foregroundStyle(ColorTokens.Text.primary).monospacedDigit()
+        }
+        .font(TypeTokens.caption)
+        .accessibilityElement(children: .combine)
     }
 }

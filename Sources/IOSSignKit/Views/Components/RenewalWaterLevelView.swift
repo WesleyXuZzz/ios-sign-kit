@@ -96,10 +96,10 @@ struct RenewalWaterResultTransitionFrame: Equatable {
 }
 
 struct RenewalWaterResultTransitionSpecification: Equatable {
-    static let minimumDrainDuration: TimeInterval = 0.80
-    static let maximumDrainDuration: TimeInterval = 1.24
-    static let drainBaseDuration: TimeInterval = 0.72
-    static let drainLevelFactor: TimeInterval = 0.52
+    static let minimumDrainDuration: TimeInterval = 0.18
+    static let maximumDrainDuration: TimeInterval = 0.24
+    static let drainBaseDuration: TimeInterval = 0.16
+    static let drainLevelFactor: TimeInterval = 0.08
     static let reducedMotionDrainDuration: TimeInterval = 0.16
     static let resultRevealDuration: TimeInterval = 0.26
     static let reducedMotionResultRevealDuration: TimeInterval = 0.16
@@ -165,7 +165,7 @@ struct RenewalWaterResultTransitionSpecification: Equatable {
         let revealDuration = reducesMotion
             ? reducedMotionResultRevealDuration
             : resultRevealDuration
-        let rawRevealProgress = clamp((elapsed - duration) / revealDuration)
+        let rawRevealProgress = clamp(elapsed / revealDuration)
         let resultOpacity = smoothstep(
             from: 0,
             to: 1,
@@ -219,7 +219,7 @@ struct RenewalWaterResultTransitionSpecification: Equatable {
                 targetRotation,
                 ringProgress
             ),
-            isComplete: rawRevealProgress >= 1
+            isComplete: rawRevealProgress >= 1 && rawDrainProgress >= 1
         )
     }
 

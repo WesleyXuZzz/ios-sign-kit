@@ -142,7 +142,6 @@ struct DeviceSelectField: View {
     @State private var isHovered = false
     @State private var fieldWidth: CGFloat = 360
     @FocusState private var isFocused: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Button {
@@ -164,10 +163,6 @@ struct DeviceSelectField: View {
                     )
                     .frame(width: 16, height: 16)
                     .rotationEffect(.degrees(isPresented ? 180 : 0))
-                    .animation(
-                        reduceMotion ? nil : MotionTokens.easeOut(0.22),
-                        value: isPresented
-                    )
                     .accessibilityHidden(true)
             }
             .padding(.leading, 8)
@@ -310,10 +305,6 @@ struct DeviceSelectField: View {
                     ? ColorTokens.BG.surfaceEmphasis
                     : ColorTokens.BG.surface
             )
-            .animation(
-                reduceMotion ? nil : MotionTokens.easeOut(0.18),
-                value: isHovered
-            )
     }
 
     private var triggerBorder: some View {
@@ -325,10 +316,6 @@ struct DeviceSelectField: View {
                         ? ColorTokens.Border.strong
                         : ColorTokens.Border.subtle),
                 lineWidth: isPresented || isFocused ? 1.5 : 1
-            )
-            .animation(
-                reduceMotion ? nil : MotionTokens.easeOut(0.18),
-                value: isPresented || isFocused
             )
     }
 
@@ -373,9 +360,6 @@ private struct DeviceSelectPopoverContent: View {
     let onSelect: (String?) -> Void
     let onRescan: () -> Void
     let onManage: () -> Void
-
-    @State private var hasAppeared = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -441,18 +425,6 @@ private struct DeviceSelectPopoverContent: View {
         }
         .padding(6)
         .background(ColorTokens.BG.surface)
-        .opacity(hasAppeared ? 1 : 0)
-        .offset(y: hasAppeared ? 0 : -4)
-        .scaleEffect(hasAppeared ? 1 : 0.985, anchor: .top)
-        .onAppear {
-            guard !reduceMotion else {
-                hasAppeared = true
-                return
-            }
-            withAnimation(MotionTokens.easeOut(0.18)) {
-                hasAppeared = true
-            }
-        }
     }
 }
 

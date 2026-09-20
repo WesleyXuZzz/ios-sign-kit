@@ -337,9 +337,10 @@ private final class StatusTitleTransitionView: NSView {
         font: NSFont,
         transition: StatusBarTitleTransition
     ) {
+        let wasAnimating = !(incomingField.layer?.animationKeys() ?? []).isEmpty
         cancelAnimations()
 
-        guard !targetTitle.isEmpty, transition != .immediate else {
+        guard !wasAnimating, !targetTitle.isEmpty, transition != .immediate else {
             targetTitle = title
             targetFont = font
             showImmediately(title, font: font)
@@ -449,7 +450,7 @@ private final class StatusTitleTransitionView: NSView {
         animation.fromValue = from
         animation.toValue = to
         animation.duration = duration
-        animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        animation.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)
         layer.add(animation, forKey: "status-opacity")
     }
 
@@ -476,7 +477,7 @@ private final class StatusTitleTransitionView: NSView {
         let group = CAAnimationGroup()
         group.animations = [opacity, translation]
         group.duration = duration
-        group.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        group.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)
         layer.add(group, forKey: "status-title-transition")
     }
 }
@@ -517,9 +518,10 @@ private final class StatusIconTransitionView: NSView {
     }
 
     func display(image: NSImage?, transition: StatusBarIconTransition) {
+        let wasAnimating = !(incomingImageView.layer?.animationKeys() ?? []).isEmpty
         cancelAnimations()
 
-        guard targetImage != nil, transition != .immediate else {
+        guard !wasAnimating, targetImage != nil, transition != .immediate else {
             targetImage = image
             showImmediately(image)
             return
@@ -585,7 +587,7 @@ private final class StatusIconTransitionView: NSView {
         animation.fromValue = from
         animation.toValue = to
         animation.duration = duration
-        animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        animation.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)
         layer.add(animation, forKey: "status-icon-opacity")
     }
 }

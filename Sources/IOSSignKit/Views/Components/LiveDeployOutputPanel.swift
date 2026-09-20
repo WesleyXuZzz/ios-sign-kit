@@ -13,7 +13,7 @@ struct LiveDeployOutputPanel: View {
     let onExpand: () -> Void
 
     @Environment(\.interfaceStyle) private var interfaceStyle
-    @State private var autoScrollEnabled = true
+    @State private var followState = LogFollowState()
 
     private static let tailAnchorID = "live-deploy-output-tail"
 
@@ -55,10 +55,17 @@ struct LiveDeployOutputPanel: View {
                     .foregroundStyle(ColorTokens.Accent.renew)
             }
             HStack {
-                Toggle("自动滚动", isOn: $autoScrollEnabled)
+                Toggle("自动滚动", isOn: Binding(
+                    get: { followState.isFollowing },
+                    set: { followState.setFollowing($0) }
+                ))
                     .toggleStyle(.checkbox)
                     .controlSize(.small)
                     .font(TypeTokens.caption)
+                if !followState.isFollowing {
+                    Button("回到最新") { followState.setFollowing(true) }
+                        .buttonStyle(RenewalButtonStyle(kind: .text))
+                }
                 Spacer(minLength: 4)
                 Button("展开", systemImage: "arrow.up.left.and.arrow.down.right", action: onExpand)
                     .buttonStyle(RenewalButtonStyle(kind: .text))
@@ -69,54 +76,112 @@ struct LiveDeployOutputPanel: View {
     }
 
     private var logBody: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(displayedLogText)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(
-                            logText.trimmingCharacters(
-                                in: .whitespacesAndNewlines
-                            ).isEmpty
-                                ? ColorTokens.Text.secondary
-                                : ColorTokens.Log.text
-                        )
-                        .textSelection(.enabled)
-                        .frame(
-                            maxWidth: .infinity,
-                            alignment: .topLeading
-                        )
+        GeometryReader { viewport in
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(displayedLogText)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(
+                                logText.trimmingCharacters(
+                                    in: .whitespacesAndNewlines
+                                ).isEmpty
+                                    ? ColorTokens.Text.secondary
+                                    : ColorTokens.Log.text
+                            )
+                            .textSelection(.enabled)
+                            .frame(
+                                maxWidth: .infinity,
+                                alignment: .topLeading
+                            )
 
-                    Color.clear
-                        .frame(height: 1)
-                        .id(Self.tailAnchorID)
-                        .accessibilityHidden(true)
+                        Color.clear
+                            .frame(height: 1)
+                            .id(Self.tailAnchorID)
+                            .accessibilityHidden(true)
+                    }
+                    .padding(12)
+                    .background {
+                        GeometryReader { content in
+                            Color.clear.preference(
+                                key: LogScrollFrameKey.self,
+                                value: content.frame(in: .named("live-log-viewport"))
+                            )
+                        }
+                    }
                 }
-                .padding(12)
-            }
-            .frame(
-                minHeight: Layout.minimumContentHeight,
-                idealHeight: Layout.idealContentHeight,
-                maxHeight: Layout.maximumContentHeight
-            )
-            .background(ColorTokens.Log.background)
-            .onAppear {
-                scrollToTail(using: proxy)
-            }
-            .onChange(of: displayedLogText) { _, _ in
-                guard autoScrollEnabled else { return }
-                scrollToTail(using: proxy)
-            }
-            .onChange(of: autoScrollEnabled) { _, enabled in
-                guard enabled else { return }
-                scrollToTail(using: proxy)
+                .coordinateSpace(name: "live-log-viewport")
+                .onPreferenceChange(LogScrollFrameKey.self) { frame in
+                    followState.observe(frame: frame, viewportHeight: viewport.size.height)
+                }
+                .frame(
+                    minHeight: Layout.minimumContentHeight,
+                    idealHeight: Layout.idealContentHeight,
+                    maxHeight: Layout.maximumContentHeight
+                )
+                .background(ColorTokens.Log.background)
+                .onAppear {
+                    scrollToTail(using: proxy)
+                }
+                .onChange(of: displayedLogText) { _, _ in
+                    guard followState.isFollowing else { return }
+                    scrollToTail(using: proxy)
+                }
+                .onChange(of: followState.isFollowing) { _, enabled in
+                    guard enabled else { return }
+                    scrollToTail(using: proxy)
+                }
             }
         }
+        .frame(minHeight: Layout.minimumContentHeight,
+               idealHeight: Layout.idealContentHeight,
+               maxHeight: Layout.maximumContentHeight)
     }
 
     private func scrollToTail(using proxy: ScrollViewProxy) {
         DispatchQueue.main.async {
+            guard followState.isFollowing else { return }
             proxy.scrollTo(Self.tailAnchorID, anchor: .bottom)
         }
+    }
+}
+
+/// Content growth must not be mistaken for the reader scrolling away from the tail.
+struct LogFollowState {
+    private(set) var isFollowing = true
+    private var manuallyPaused = false
+    private var previousFrame: CGRect?
+    private var previousViewportHeight: CGFloat?
+
+    mutating func setFollowing(_ enabled: Bool) {
+        isFollowing = enabled
+        manuallyPaused = !enabled
+    }
+
+    mutating func observe(frame: CGRect, viewportHeight: CGFloat) {
+        guard frame.height > 0, viewportHeight > 0 else { return }
+        defer {
+            previousFrame = frame
+            previousViewportHeight = viewportHeight
+        }
+        guard let previousFrame,
+              let previousViewportHeight,
+              abs(frame.height - previousFrame.height) < 0.5,
+              abs(viewportHeight - previousViewportHeight) < 0.5 else { return }
+        let moved = abs(frame.minY - previousFrame.minY) > 0.5
+        guard moved else { return }
+        let atBottom = frame.maxY <= viewportHeight + 2
+        if frame.minY > previousFrame.minY + 0.5 && !atBottom {
+            isFollowing = false
+        } else if atBottom && !manuallyPaused {
+            isFollowing = true
+        }
+    }
+}
+
+private struct LogScrollFrameKey: PreferenceKey {
+    static let defaultValue = CGRect.zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        value = nextValue()
     }
 }

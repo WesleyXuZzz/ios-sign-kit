@@ -18,7 +18,7 @@ struct StatusPill: View {
                 .font(TypeTokens.caption.weight(.semibold))
                 .lineLimit(1)
         }
-        .foregroundStyle(tone.color)
+        .foregroundStyle(tone.textColor)
         .padding(.horizontal, 10)
         .frame(height: 22)
         .background(
@@ -110,10 +110,17 @@ struct RenewalButtonStyle: ButtonStyle {
                     style: .continuous
                 )
             )
-            .scaleEffect(configuration.isPressed && isEnabled && !reduceMotion ? 0.97 : 1)
+            .scaleEffect(
+                configuration.isPressed && isEnabled
+                    && MotionTokens.interactionAnimation(reduceMotion: reduceMotion) != nil
+                    ? 0.97 : 1
+            )
             .opacity(isEnabled ? 1 : 0.4)
             .animation(
-                reduceMotion ? nil : .easeOut(duration: MotionTokens.fast),
+                MotionTokens.interactionAnimation(
+                    reduceMotion: reduceMotion,
+                    duration: configuration.isPressed ? 0.12 : 0.10
+                ),
                 value: configuration.isPressed
             )
     }

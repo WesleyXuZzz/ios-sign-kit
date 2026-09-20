@@ -24,6 +24,7 @@ struct MainPanelView: View {
     @ObservedObject var viewModel: MenuBarViewModel
     @ObservedObject var panelVisibility: MainPanelVisibilityState
     @State private var navigationState = NavigationState()
+    @State private var pageAnimation: Animation?
     @State private var isDiagnosticsPresented = false
     @State private var isDeployLogPresented = false
     @State private var selectedHistoryID: String?
@@ -124,7 +125,10 @@ struct MainPanelView: View {
 
     private var selectedTab: PanelTab {
         get { navigationState.selectedTab }
-        nonmutating set { navigationState.selectedTab = newValue }
+        nonmutating set {
+            preparePageAnimation()
+            navigationState.selectedTab = newValue
+        }
     }
 
     private var selectedSettingsCategory: SettingsPanelCategory {
@@ -143,7 +147,9 @@ struct MainPanelView: View {
                 commandBar
                 statusPage
             }
-            .opacity(selectedTab == .status ? 1 : 0)
+            .animation(effectivePageAnimation) { content in
+                content.opacity(selectedTab == .status ? 1 : 0)
+            }
             .disabled(selectedTab != .status)
             .accessibilityHidden(selectedTab != .status)
 
@@ -151,16 +157,12 @@ struct MainPanelView: View {
                 selectedTabContent
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background { InterfaceCanvas() }
-                    .transition(.opacity)
+                    .transition(.opacity.animation(effectivePageAnimation))
                     .zIndex(1)
             }
         }
         .frame(minWidth: Layout.minimumWindowWidth, maxHeight: .infinity, alignment: .top)
-        .animation(reduceMotion ? nil : MotionTokens.easeOut(), value: selectedTab)
         .environment(\.interfaceStyle, interfaceStyle)
-        .popover(isPresented: $isDiagnosticsPresented) {
-            diagnosticsPopover.environment(\.interfaceStyle, interfaceStyle)
-        }
         .alert("选择本次签名方式", isPresented: manualRefreshPromptIsPresented) {
             Button("更新签名描述文件并安装") {
                 viewModel.confirmManualRefresh(profileRefreshMode: .force)
@@ -226,6 +228,9 @@ struct MainPanelView: View {
                 isDiagnosticsPresented.toggle()
             }
             .buttonStyle(RenewalButtonStyle(kind: .text))
+            .popover(isPresented: $isDiagnosticsPresented) {
+                diagnosticsPopover.environment(\.interfaceStyle, interfaceStyle)
+            }
             Button {
                 showSettings(category: selectedSettingsCategory)
             } label: {
@@ -254,6 +259,7 @@ struct MainPanelView: View {
 
     private func closeContentPage() {
         let previousPage = selectedTab
+        preparePageAnimation()
         navigationState.closeContentPage()
         if previousPage == .history {
             historyEntryFocused = true
@@ -281,7 +287,7 @@ struct MainPanelView: View {
                     get: { selectedSettingsCategory },
                     set: { selectedSettingsCategory = $0 }
                 ),
-                onOpenDiagnostics: { isDiagnosticsPresented = true },
+                diagnosticsContent: { AnyView(diagnosticsPopover) },
                 initialScrollAnchor: settingsInitialScrollAnchor,
                 interfaceStyle: Binding(
                     get: { interfaceStyle },
@@ -301,6 +307,8 @@ struct MainPanelView: View {
                         deployLogText: viewModel.deployLogText,
                         onAction: handlePrimaryJourneyAction,
                         onDeviceSelectionRequested: { showSettings(category: .target) },
+                        onRenewalSettingsRequested: { showSettings(category: .renewal) },
+                        diagnosticsContent: { AnyView(diagnosticsPopover) },
                         isAnimationActive: panelVisibility.isVisible && selectedTab == .status,
                         config: viewModel.config,
                         availableWidth: max(geometry.size.width - 40, 0),
@@ -457,7 +465,19 @@ struct MainPanelView: View {
     }
 
     private func showSettings(category: SettingsPanelCategory) {
+        preparePageAnimation()
         navigationState.showSettings(category: category)
+    }
+
+    private var effectivePageAnimation: Animation? {
+        reduceMotion || !panelVisibility.isVisible ? nil : pageAnimation
+    }
+
+    private func preparePageAnimation() {
+        pageAnimation = MotionTokens.interactionAnimation(
+            reduceMotion: reduceMotion,
+            duration: 0.18
+        )
     }
 
     private func environmentCheckSystemImage(
