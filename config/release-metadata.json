@@ -3,6 +3,6 @@
   "executableName": "IOSSignKit",
   "bundleIdentifier": "com.xuzw.iossignkit",
   "marketingVersion": "1.1.2",
-  "buildVersion": "9",
+  "buildVersion": "10",
   "minimumMacOSVersion": "14.0"
 }
