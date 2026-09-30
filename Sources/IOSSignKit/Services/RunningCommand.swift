@@ -178,6 +178,16 @@ final class RunningCommand: @unchecked Sendable {
             Self.closeAll(outputDescriptors + errorDescriptors)
             throw CommandRunnerError.spawnSetupFailed(setupStatus)
         }
+        if let qosClass = CommandSpawnQualityOfService.current.spawnQOSClass {
+            setupStatus = posix_spawnattr_set_qos_class_np(
+                &attributes,
+                qosClass
+            )
+            guard setupStatus == 0 else {
+                Self.closeAll(outputDescriptors + errorDescriptors)
+                throw CommandRunnerError.spawnSetupFailed(setupStatus)
+            }
+        }
 
         let argumentStorage = CStringArray([launchPath] + arguments)
         let environmentStorage = CStringArray(

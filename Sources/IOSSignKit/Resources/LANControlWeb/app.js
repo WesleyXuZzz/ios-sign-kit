@@ -119,9 +119,19 @@ async function api(path, options = {}) {
   return payload;
 }
 
-function stopPolling() {
+// Whether the signed-in page wants live status. The interval itself only runs
+// while the page is visible, so a backgrounded tab stops waking the phone's
+// radio and CPU (and the Mac's server) every few seconds.
+let pollingRequested = false;
+
+function clearPollTimer() {
   if (pollTimer) window.clearInterval(pollTimer);
   pollTimer = null;
+}
+
+function stopPolling() {
+  pollingRequested = false;
+  clearPollTimer();
 }
 
 function setLoginError(message) {
@@ -272,8 +282,24 @@ async function refreshStatus({ announceFailure = false } = {}) {
 }
 
 function startPolling() {
-  stopPolling();
+  pollingRequested = true;
+  clearPollTimer();
+  if (document.hidden) return;
   pollTimer = window.setInterval(() => refreshStatus(), POLL_INTERVAL_MS);
+}
+
+function updatePollingVisibility() {
+  if (!pollingRequested) return;
+  if (document.hidden) {
+    clearPollTimer();
+    return;
+  }
+  if (pollTimer) return;
+  // Catch up once on return instead of waiting a full interval.
+  refreshStatus();
+  if (pollingRequested && !pollTimer) {
+    pollTimer = window.setInterval(() => refreshStatus(), POLL_INTERVAL_MS);
+  }
 }
 
 async function handleLogin(event) {
@@ -490,7 +516,11 @@ document.addEventListener("keydown", () => {
 function updateMotionVisibility() {
   document.documentElement.classList.toggle("motion-paused", document.hidden);
 }
-document.addEventListener("visibilitychange", updateMotionVisibility);
+function handleVisibilityChange() {
+  updateMotionVisibility();
+  updatePollingVisibility();
+}
+document.addEventListener("visibilitychange", handleVisibilityChange);
 updateMotionVisibility();
 
 if (pairingToken) {

@@ -1309,8 +1309,8 @@ final class MenuBarViewModel: ObservableObject {
         )
         scheduledPollingIntervalMinutes = intervalMinutes
 
-        let interval = intervalMinutes * 60
-        pollingTimer = Timer.scheduledTimer(withTimeInterval: TimeInterval(interval), repeats: true) { [weak self] _ in
+        let interval = TimeInterval(intervalMinutes * 60)
+        let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
                 guard !self.deviceRefreshSession.isRunning,
@@ -1323,6 +1323,27 @@ final class MenuBarViewModel: ObservableObject {
                     mode: self.preferredBackgroundRefreshMode
                 )
             }
+        }
+        timer.tolerance = TimerCoalescingPolicy.pollingTolerance(for: interval)
+        pollingTimer = timer
+    }
+
+    /// Timer-driven heartbeat checks are deferrable, so their device
+    /// commands run at utility QoS. User-initiated checks, post-deploy
+    /// verification and connection confirmation keep the default QoS so
+    /// their latency is unchanged.
+    nonisolated static func commandQualityOfService(
+        presentation: EnvironmentRefreshPresentation,
+        mode: EnvironmentRefreshMode
+    ) -> CommandSpawnQualityOfService {
+        guard presentation == .background else {
+            return .inherited
+        }
+        switch mode {
+        case .backgroundPoll, .appMetadataRetry, .automaticRecoveryCheck:
+            return .utility
+        case .connectionConfirmation, .manualDeepCheck:
+            return .inherited
         }
     }
 
@@ -1550,11 +1571,15 @@ final class MenuBarViewModel: ObservableObject {
             return
         }
 
-        remainingExpiryTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
+        let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
             Task { @MainActor in
                 self?.handleRemainingExpiryTimer()
             }
         }
+        timer.tolerance = TimerCoalescingPolicy.expiryLabelTolerance(
+            for: interval
+        )
+        remainingExpiryTimer = timer
     }
 
     private func handleRemainingExpiryTimer() {
@@ -1658,11 +1683,19 @@ final class MenuBarViewModel: ObservableObject {
         )
         let workflow = deviceRefreshWorkflow
         let comparisonSink = deviceDetectionComparisonSink
+        let commandQualityOfService = Self.commandQualityOfService(
+            presentation: presentation,
+            mode: effectiveMode
+        )
 
         deviceRefreshSession.run(sequence: refreshSequence) {
             [weak self] in
             do {
-                let transition = try await workflow.refresh(request)
+                let transition = try await CommandSpawnQualityOfService
+                    .$current
+                    .withValue(commandQualityOfService) {
+                        try await workflow.refresh(request)
+                    }
                 guard let self,
                       !Task.isCancelled,
                       self.deviceRefreshSession.isCurrent(

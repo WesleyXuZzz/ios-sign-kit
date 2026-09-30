@@ -42,14 +42,25 @@ function fixture() {
     querySelector: node, createElement: element,
     addEventListener(name, callback) { listeners.set(name, callback); }
   };
+  const intervals = new Set();
+  let nextInterval = 1;
+  const requests = [];
   const context = vm.createContext({
     document, URLSearchParams,
     sessionStorage: { getItem: () => null },
-    window: { location: { search: "" }, setTimeout() {} }
+    fetch: path => {
+      requests.push(path);
+      return new Promise(() => {});
+    },
+    window: {
+      location: { search: "" }, setTimeout() {},
+      setInterval() { const id = nextInterval++; intervals.add(id); return id; },
+      clearInterval(id) { intervals.delete(id); }
+    }
   });
   vm.runInContext(source, context);
   return {
-    document, node,
+    document, node, intervals, requests,
     run: code => vm.runInContext(code, context),
     dispatch: name => listeners.get(name)()
   };
@@ -134,4 +145,43 @@ test("login immediately focuses its field without delaying a subsequent page foc
   assert.equal(f.document.activeElement, f.node("#password-input"));
   f.run('showState("ready", "#ready-title")');
   assert.equal(f.document.activeElement, f.node("#ready-title"));
+});
+
+test("status polling stops while hidden and catches up once when visible again", () => {
+  const f = fixture();
+  f.run("startPolling()");
+  assert.equal(f.intervals.size, 1);
+  f.document.hidden = true;
+  f.dispatch("visibilitychange");
+  assert.equal(f.intervals.size, 0);
+  assert.equal(f.document.documentElement.classList.contains("motion-paused"), true);
+  f.document.hidden = false;
+  f.dispatch("visibilitychange");
+  assert.equal(f.intervals.size, 1);
+  assert.deepEqual(f.requests, ["/api/status"]);
+  f.dispatch("visibilitychange");
+  assert.equal(f.intervals.size, 1);
+  assert.equal(f.requests.length, 1);
+});
+
+test("signed-out pages never resume polling on visibility changes", () => {
+  const f = fixture();
+  f.run("startPolling(); showLogin()");
+  assert.equal(f.intervals.size, 0);
+  f.document.hidden = true;
+  f.dispatch("visibilitychange");
+  f.document.hidden = false;
+  f.dispatch("visibilitychange");
+  assert.equal(f.intervals.size, 0);
+  assert.equal(f.requests.length, 0);
+});
+
+test("polling started while hidden waits for the page to become visible", () => {
+  const f = fixture();
+  f.document.hidden = true;
+  f.run("startPolling()");
+  assert.equal(f.intervals.size, 0);
+  f.document.hidden = false;
+  f.dispatch("visibilitychange");
+  assert.equal(f.intervals.size, 1);
 });
