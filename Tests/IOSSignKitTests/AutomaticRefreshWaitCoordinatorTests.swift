@@ -424,6 +424,142 @@ struct AutomaticRefreshWaitCoordinatorTests {
     }
 }
 
+@MainActor
+struct AutomaticRefreshWaitLockEventTests {
+    @Test
+    func lockEventsProbeImmediatelyAndRelaxPollingWhileConnected()
+        async throws
+    {
+        let scheduler = ManualRefreshScheduler()
+        let probes = AutomaticWaitProbeRecorder(
+            outcomes: Array(repeating: .stillWaiting(.deviceLocked), count: 3)
+        )
+        let transitions = TestEventRecorder<AutomaticRefreshWaitTransition>()
+        let (events, eventContinuation) = AsyncStream.makeStream(
+            of: DeviceLockEvent.self
+        )
+        let terminated = TestEventRecorder<Void>()
+        eventContinuation.onTermination = { _ in terminated.record(()) }
+        var observedDeviceIDs: [String] = []
+        let coordinator = AutomaticRefreshWaitCoordinator(
+            policy: .test,
+            scheduler: scheduler.interface,
+            lockEvents: { deviceID in
+                observedDeviceIDs.append(deviceID)
+                return events
+            }
+        )
+
+        let started = coordinator.wait(
+            key: .test,
+            blocker: .deviceLocked,
+            probe: { await probes.next() },
+            resume: { true },
+            transition: transitions.record
+        )
+        #expect(started)
+        #expect(try await transitions.next() == .waitingLocked)
+        #expect(observedDeviceIDs == ["iphone-1"])
+        await scheduler.waitUntilScheduled(count: 1)
+
+        eventContinuation.yield(.observing)
+        eventContinuation.yield(.lockStateMayHaveChanged)
+        await scheduler.waitUntilScheduled(count: 2)
+        scheduler.advance(by: .zero)
+        #expect(try await transitions.next() == .waitingLocked)
+
+        await scheduler.waitUntilScheduled(count: 3)
+        scheduler.advance(by: .milliseconds(3))
+        #expect(try await transitions.next() == .waitingLocked)
+        await scheduler.waitUntilScheduled(count: 4)
+
+        eventContinuation.yield(.interrupted)
+        await scheduler.waitUntilScheduled(count: 5)
+        #expect(scheduler.snapshot.requestedDelays == [
+            .milliseconds(5),
+            .zero,
+            .milliseconds(3),
+            .milliseconds(25),
+            .milliseconds(5)
+        ])
+        #expect(await probes.count() == 2)
+
+        coordinator.cancel()
+        await coordinator.waitUntilLockEventObservationSettled()
+        _ = try await terminated.next()
+        #expect(scheduler.snapshot.pendingSleepCount == 0)
+    }
+
+    @Test
+    func resumingStopsLockEventObservation() async throws {
+        let scheduler = ManualRefreshScheduler()
+        let (events, eventContinuation) = AsyncStream.makeStream(
+            of: DeviceLockEvent.self
+        )
+        let terminated = TestEventRecorder<Void>()
+        eventContinuation.onTermination = { _ in terminated.record(()) }
+        let transitions = TestEventRecorder<AutomaticRefreshWaitTransition>()
+        let coordinator = AutomaticRefreshWaitCoordinator(
+            policy: .test,
+            scheduler: scheduler.interface,
+            lockEvents: { _ in events }
+        )
+
+        let started = coordinator.wait(
+            key: .test,
+            blocker: .deviceLocked,
+            probe: { .resume },
+            resume: { true },
+            transition: transitions.record
+        )
+        #expect(started)
+        #expect(try await transitions.next() == .waitingLocked)
+        eventContinuation.yield(.lockStateMayHaveChanged)
+        await scheduler.waitUntilScheduled(count: 2)
+        scheduler.advance(by: .zero)
+        #expect(try await transitions.next() == .unlockObserved)
+        #expect(try await transitions.next() == .resumed)
+
+        await coordinator.waitUntilLockEventObservationSettled()
+        _ = try await terminated.next()
+        #expect(!coordinator.isWaiting)
+        #expect(scheduler.snapshot.pendingSleepCount == 0)
+    }
+
+    @Test
+    func lockEventsDoNotProbeWhileWaitingForDestination() async throws {
+        let scheduler = ManualRefreshScheduler()
+        let probes = AutomaticWaitProbeRecorder(outcomes: [])
+        let (events, eventContinuation) = AsyncStream.makeStream(
+            of: DeviceLockEvent.self
+        )
+        let coordinator = AutomaticRefreshWaitCoordinator(
+            policy: .test,
+            scheduler: scheduler.interface,
+            lockEvents: { _ in events }
+        )
+
+        let started = coordinator.wait(
+            key: .test,
+            blocker: .destinationPreparation,
+            probe: { await probes.next() },
+            resume: { true }
+        )
+        #expect(started)
+        await scheduler.waitUntilScheduled(count: 1)
+        eventContinuation.yield(.observing)
+        eventContinuation.yield(.lockStateMayHaveChanged)
+        eventContinuation.yield(.interrupted)
+        eventContinuation.finish()
+        await coordinator.waitUntilLockEventObservationSettled()
+
+        #expect(scheduler.snapshot.requestedDelays == [.milliseconds(15)])
+        #expect(await probes.count() == 0)
+        coordinator.cancel()
+        #expect(scheduler.snapshot.pendingSleepCount == 0)
+    }
+}
+
 private actor AutomaticWaitProbeRecorder {
     private var outcomes: [AutomaticRefreshWaitProbeOutcome]
     private var callCount = 0
@@ -519,7 +655,9 @@ private extension AutomaticRefreshWaitPolicy {
         prolongedProbeInterval: .milliseconds(20),
         rapidProbeWindow: .seconds(1),
         wakeFirstProbeDelay: .milliseconds(2),
-        wakeSecondProbeDelay: .milliseconds(4)
+        wakeSecondProbeDelay: .milliseconds(4),
+        observedLockFallbackInterval: .milliseconds(25),
+        lockEventFollowupDelay: .milliseconds(3)
     )
 }
 

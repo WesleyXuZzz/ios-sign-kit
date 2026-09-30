@@ -239,6 +239,7 @@ final class MenuBarViewModel: ObservableObject {
         deviceAppInspector: DeviceAppInspector? = nil,
         inspectInstalledApp: InspectInstalledAppHandler? = nil,
         deviceLockStateInspector: DeviceLockStateInspector? = nil,
+        deviceLockEventObserver: DeviceLockEventObserver? = nil,
         reminderPolicy: ReminderPolicy = ReminderPolicy(),
         expiryInspector: ExpiryInspector = ExpiryInspector(),
         deployService: DeployService? = nil,
@@ -334,9 +335,25 @@ final class MenuBarViewModel: ObservableObject {
         )
         self.refreshSessionCaches = refreshSessionCaches
         self.refreshScheduler = refreshScheduler
+        // Only the production lock inspector gets a production observer, so
+        // fixtures that inject lock states never spawn `devicectl`.
+        let resolvedDeviceLockEventObserver = deviceLockEventObserver
+            ?? (deviceLockStateInspector == nil
+                ? DeviceLockEventObserver(
+                    commandRunner: commandRunner,
+                    sleep: refreshScheduler.sleep
+                )
+                : nil)
+        var lockEvents: AutomaticRefreshWaitCoordinator.LockEvents?
+        if let resolvedDeviceLockEventObserver {
+            lockEvents = { deviceID in
+                resolvedDeviceLockEventObserver.events(deviceID: deviceID)
+            }
+        }
         self.automaticRefreshCoordinator = AutomaticRefreshCoordinator(
             scheduler: refreshScheduler,
-            waitPolicy: refreshTimingPolicy.automaticWaitPolicy
+            waitPolicy: refreshTimingPolicy.automaticWaitPolicy,
+            lockEvents: lockEvents
         )
         self.refreshTimingPolicy = refreshTimingPolicy
         if let installedAppRetryDelays, !installedAppRetryDelays.isEmpty {

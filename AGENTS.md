@@ -132,7 +132,8 @@ open Package.swift
 - `XcodeProjectLocator`：递归发现项目目录中的 `.xcodeproj` 与 `.xcworkspace`，同时排除隐藏目录、依赖目录、构建产物目录和 `.xcodeproj` 内部生成的重复 Workspace。
 - `XcodeProjectResolver`：通过 `xcodebuild -list -json` 与 `-showBuildSettings -json` 识别真实 Scheme、`iphoneos` App Target 与 Bundle ID；混合平台 Workspace 中只跳过可确认不包含 iOS App 的 Scheme。
 - `XcodeDestinationReadinessInspector`：部署前通过 `xcodebuild -showdestinations` 按完整设备 ID 检查目标是否可用，并区分需解锁、不可用和无法确认。
-- `AutomaticRefreshWaitCoordinator`：在到期自动刷新遇到锁屏、锁态未知或 Xcode destination 准备中时维持单一等待任务；统一承接周期探测、系统唤醒和用户“立即检查”，并在目标、安装实例或策略变化后丢弃旧结果。
+- `AutomaticRefreshWaitCoordinator`：在到期自动刷新遇到锁屏、锁态未知或 Xcode destination 准备中时维持单一等待任务；统一承接周期探测、锁态事件、系统唤醒和用户“立即检查”，并在目标、安装实例或策略变化后丢弃旧结果。
+- `DeviceLockEventObserver`：只在自动刷新等待期间通过 `devicectl device notification observe` 监听目标设备的 SpringBoard 锁态通知，事件只触发锁态探测，不直接授权部署。
 - `DeployService`：把已授权目标适配为内置标准部署请求，返回可取消的 `RunningDeploy`，并将有界 stdout/stderr、精确 Profile 有效期和恢复确认状态写入日志与部署结果。
 - `StandardIOSDeploymentExecutor`：直接编排 `xcodebuild -showBuildSettings`、Profile 缓存事务、真机 Build、已签名产物核验、宿主回执、`devicectl install` 与可选 Launch；所有外部阶段都有有限超时，构建只写入按精确部署令牌隔离的私有 DerivedData。
 - `ProvisioningProfileCacheManager` / `ProvisioningProfileCacheTransaction`：在 Xcode UserData 与 MobileDevice 两个标准缓存目录中按 Team + Bundle ID 精确处理 Profile；`auto` 只隔离过期匹配项，`force` 隔离全部匹配项，并以带摘要的持久化事务支持 commit、rollback 与崩溃恢复。
@@ -207,7 +208,7 @@ open Package.swift
 - 只有已确认目标 App 存在且预计到期时，才满足自动刷新条件。
 - 自动初次刷新与自动恢复显式使用 `ProvisioningProfileRefreshMode.automatic`，保持优先复用仍有效 Profile 的既有行为。
 - 部署前按完整设备 ID 检查 Xcode destination；无法确认 readiness 时自动路径禁止部署，手动路径显示诊断后可继续。
-- 自动刷新遇到已锁定设备时每 `30` 秒检查一次；锁态未知时每 `60` 秒检查一次且保持失败关闭；Xcode destination 仍在准备时每 `120` 秒检查一次。连续等待超过 `2` 小时后统一降为每 `300` 秒一次。
+- 自动刷新遇到已锁定设备时每 `30` 秒检查一次；锁态未知时每 `60` 秒检查一次且保持失败关闭；Xcode destination 仍在准备时每 `120` 秒检查一次。连续等待超过 `2` 小时后统一降为每 `300` 秒一次。锁态事件观察会话连接期间，设备每次锁屏或解锁都会立即探测并在 `3` 秒后补测，锁屏与锁态未知的周期探测放宽为 `300` 秒兜底；会话中断时恢复上述节奏。
 - 自动刷新等待期间，普通轮询、系统唤醒和用户“立即检查”共用同一探测循环，任一时刻至多执行一个锁态探测或部署预检；Mac 唤醒后优先在 `+5`、`+20` 秒补检。
 - 自动部署提交前必须再次确认设备已解锁；只有部署进程即将真实启动时才记录自动尝试时间，锁屏等待和部署预检不得提前消耗检查冷却。
 - 自动初次部署明确因 `device_preparation_required` 失败时，在重新核对设备、配置、安装实例、策略和到期条件后最多恢复重试一次；手动刷新和恢复尝试本身都不得继续递归重试。

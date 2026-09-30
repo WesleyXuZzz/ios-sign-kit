@@ -28,6 +28,12 @@ struct AutomaticRefreshWaitPolicy: Equatable, Sendable {
     let rapidProbeWindow: Duration
     let wakeFirstProbeDelay: Duration
     let wakeSecondProbeDelay: Duration
+    /// Safety-net probe interval while a lock event observer is connected;
+    /// unlocks are normally noticed from the event itself.
+    let observedLockFallbackInterval: Duration
+    /// Second probe after a lock event, in case the first ran before the
+    /// device finished reporting the unlock.
+    let lockEventFollowupDelay: Duration
 }
 
 enum AutomaticRefreshWaitTransition: String, Equatable, Sendable {
@@ -46,6 +52,7 @@ final class AutomaticRefreshWaitCoordinator {
     typealias Probe = @MainActor () async -> AutomaticRefreshWaitProbeOutcome
     typealias Resume = @MainActor () -> Bool
     typealias Transition = @MainActor (AutomaticRefreshWaitTransition) -> Void
+    typealias LockEvents = @MainActor (_ deviceID: String) -> AsyncStream<DeviceLockEvent>
 
     private struct Request {
         let key: AutomaticRefreshWaitKey
@@ -55,7 +62,7 @@ final class AutomaticRefreshWaitCoordinator {
         let probe: Probe
         let resume: Resume
         let transition: Transition
-        var hasPendingWakeFollowup: Bool
+        var pendingFollowupDelay: Duration?
     }
 
     private let policy: AutomaticRefreshWaitPolicy
@@ -64,15 +71,20 @@ final class AutomaticRefreshWaitCoordinator {
     private var task: Task<Void, Never>?
     private var isProbeInFlight = false
     private var pendingProbeDelay: Duration?
+    private let lockEvents: LockEvents?
+    private var lockEventTask: Task<Void, Never>?
+    private var isLockObserverConnected = false
 
     var isWaiting: Bool { request != nil }
 
     init(
         policy: AutomaticRefreshWaitPolicy,
-        scheduler: RefreshScheduler = .continuous
+        scheduler: RefreshScheduler = .continuous,
+        lockEvents: LockEvents? = nil
     ) {
         self.policy = policy
         self.scheduler = scheduler
+        self.lockEvents = lockEvents
     }
 
     @discardableResult
@@ -97,12 +109,16 @@ final class AutomaticRefreshWaitCoordinator {
             probe: probe,
             resume: resume,
             transition: transition,
-            hasPendingWakeFollowup: false
+            pendingFollowupDelay: nil
         )
         emit(Self.transition(for: blocker), operationID: operationID)
         requestProbe(
             operationID: operationID,
             after: delay(for: blocker)
+        )
+        startLockEventObservation(
+            deviceID: key.deviceID,
+            operationID: operationID
         )
         return true
     }
@@ -111,7 +127,10 @@ final class AutomaticRefreshWaitCoordinator {
         guard var request else {
             return
         }
-        request.hasPendingWakeFollowup = true
+        request.pendingFollowupDelay = max(
+            policy.wakeSecondProbeDelay - policy.wakeFirstProbeDelay,
+            .zero
+        )
         self.request = request
         emit(.wakeObserved, operationID: request.operationID)
         requestProbe(
@@ -131,6 +150,10 @@ final class AutomaticRefreshWaitCoordinator {
         await task?.value
     }
 
+    func waitUntilLockEventObservationSettled() async {
+        await lockEventTask?.value
+    }
+
     func cancel() {
         cancel(recordTransition: true)
     }
@@ -143,6 +166,69 @@ final class AutomaticRefreshWaitCoordinator {
         task = nil
         pendingProbeDelay = nil
         request = nil
+        stopLockEventObservation()
+    }
+
+    private func startLockEventObservation(
+        deviceID: String,
+        operationID: UUID
+    ) {
+        stopLockEventObservation()
+        guard let lockEvents else {
+            return
+        }
+        let events = lockEvents(deviceID)
+        lockEventTask = Task { @MainActor [weak self] in
+            for await event in events {
+                guard let self,
+                      !Task.isCancelled,
+                      self.request?.operationID == operationID else {
+                    return
+                }
+                self.handle(event, operationID: operationID)
+            }
+        }
+    }
+
+    private func stopLockEventObservation() {
+        // Cancelling the consuming task terminates the stream, which in turn
+        // cancels the observer and its `devicectl` process.
+        lockEventTask?.cancel()
+        lockEventTask = nil
+        isLockObserverConnected = false
+    }
+
+    private func handle(_ event: DeviceLockEvent, operationID: UUID) {
+        guard var request, request.operationID == operationID else {
+            return
+        }
+        switch event {
+        case .observing:
+            isLockObserverConnected = true
+        case .lockStateMayHaveChanged:
+            isLockObserverConnected = true
+            guard request.blocker != .destinationPreparation else {
+                return
+            }
+            request.pendingFollowupDelay = policy.lockEventFollowupDelay
+            self.request = request
+            requestProbe(operationID: operationID, after: .zero)
+        case .interrupted:
+            let wasConnected = isLockObserverConnected
+            isLockObserverConnected = false
+            guard wasConnected,
+                  request.blocker != .destinationPreparation else {
+                return
+            }
+            // The scheduled probe may be the slow fallback; restore polling.
+            requestProbe(
+                operationID: operationID,
+                after: delay(
+                    for: request.blocker,
+                    startedAt: request.startedAt
+                )
+            )
+        }
     }
 
     private func requestProbe(
@@ -236,6 +322,7 @@ final class AutomaticRefreshWaitCoordinator {
             emit(.resumed, operationID: operationID)
             task = nil
             self.request = nil
+            stopLockEventObservation()
         case .stillWaiting(let blocker):
             request.blocker = blocker
             let nextDelay = pendingProbeDelay ?? nextDelay(for: &request)
@@ -246,13 +333,9 @@ final class AutomaticRefreshWaitCoordinator {
     }
 
     private func nextDelay(for request: inout Request) -> Duration {
-        if request.hasPendingWakeFollowup {
-            request.hasPendingWakeFollowup = false
-            return max(
-                policy.wakeSecondProbeDelay
-                    - policy.wakeFirstProbeDelay,
-                .zero
-            )
+        if let followupDelay = request.pendingFollowupDelay {
+            request.pendingFollowupDelay = nil
+            return followupDelay
         }
         return delay(
             for: request.blocker,
@@ -264,6 +347,9 @@ final class AutomaticRefreshWaitCoordinator {
         for blocker: AutomaticRefreshWaitBlocker,
         startedAt: Date? = nil
     ) -> Duration {
+        if isLockObserverConnected, blocker != .destinationPreparation {
+            return policy.observedLockFallbackInterval
+        }
         if let startedAt,
            scheduler.wallNow().timeIntervalSince(startedAt)
                 >= policy.rapidProbeWindow.timeInterval {

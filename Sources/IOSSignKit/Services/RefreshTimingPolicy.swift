@@ -20,7 +20,9 @@ struct RefreshTimingPolicy: Equatable, Sendable {
             prolongedProbeInterval: .seconds(300),
             rapidProbeWindow: .seconds(2 * 60 * 60),
             wakeFirstProbeDelay: .seconds(5),
-            wakeSecondProbeDelay: .seconds(20)
+            wakeSecondProbeDelay: .seconds(20),
+            observedLockFallbackInterval: .seconds(300),
+            lockEventFollowupDelay: .seconds(3)
         ),
         requiredAbsenceCount: 2
     )

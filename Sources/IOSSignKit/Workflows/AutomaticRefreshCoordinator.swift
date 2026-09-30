@@ -9,12 +9,14 @@ final class AutomaticRefreshCoordinator {
 
     init(
         scheduler: RefreshScheduler = .continuous,
-        waitPolicy: AutomaticRefreshWaitPolicy
+        waitPolicy: AutomaticRefreshWaitPolicy,
+        lockEvents: AutomaticRefreshWaitCoordinator.LockEvents? = nil
     ) {
         self.scheduler = scheduler
         self.waitCoordinator = AutomaticRefreshWaitCoordinator(
             policy: waitPolicy,
-            scheduler: scheduler
+            scheduler: scheduler,
+            lockEvents: lockEvents
         )
     }
 
@@ -53,6 +55,10 @@ final class AutomaticRefreshCoordinator {
 
     func waitUntilCurrentProbeSettled() async {
         await waitCoordinator.waitUntilCurrentProbeSettled()
+    }
+
+    func waitUntilLockEventObservationSettled() async {
+        await waitCoordinator.waitUntilLockEventObservationSettled()
     }
 
     func cancelWait() {
