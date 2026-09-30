@@ -8,6 +8,8 @@ struct RenewalWaterLevelSpecification: Equatable {
     static let maximumLevel = 0.95
     static let amplitudeFadeRange = 0.06
     static let bubbleInterval: TimeInterval = 0.5
+    /// 慢速水位与气泡在 30 fps 下观感不变，只需一半的重绘与合成开销。
+    static let preferredFrameRate = 30.0
     static let bubbleMinimumLevel = minimumLevel + 0.03
 
     struct Wave: Equatable {
@@ -512,7 +514,7 @@ struct RenewalWaterLevelView: View {
     var body: some View {
         TimelineView(
             .animation(
-                minimumInterval: 1 / 60,
+                minimumInterval: 1 / RenewalWaterLevelSpecification.preferredFrameRate,
                 paused: !animationShouldRun
             )
         ) { context in

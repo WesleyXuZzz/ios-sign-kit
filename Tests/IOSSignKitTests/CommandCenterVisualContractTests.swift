@@ -60,8 +60,8 @@ struct CommandCenterVisualContractTests {
     }
 
     @Test
-    func sidebarRenewalIconUsesDisplayRateMotion() {
-        #expect(SidebarBrandIcon.Layout.preferredFrameRate == 60)
+    func sidebarRenewalIconUsesEnergyEfficientMotionRate() {
+        #expect(SidebarBrandIcon.Layout.preferredFrameRate == 30)
     }
 
     @Test

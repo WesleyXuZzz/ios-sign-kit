@@ -4,7 +4,8 @@ import SwiftUI
 struct SidebarBrandIcon: View {
     enum Layout {
         static let defaultSize: CGFloat = 64
-        static let preferredFrameRate = 60.0
+        /// 30pt 图标的最快轨道周期约 0.9 秒，30 fps 足够平滑且减半重绘开销。
+        static let preferredFrameRate = 30.0
     }
 
     let presentation: RenewalIconPresentation

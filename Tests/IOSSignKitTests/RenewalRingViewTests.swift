@@ -282,6 +282,7 @@ struct RenewalRingViewTests {
         #expect(RenewalWaterLevelSpecification.maximumLevel == 0.95)
         #expect(RenewalWaterLevelSpecification.amplitudeFadeRange == 0.06)
         #expect(RenewalWaterLevelSpecification.bubbleInterval == 0.5)
+        #expect(RenewalWaterLevelSpecification.preferredFrameRate == 30)
 
         #expect(abs(RenewalWaterLevelSpecification.level(
             at: 0,
