@@ -552,6 +552,14 @@ private final class StatusIconTransitionView: NSView {
         }
     }
 
+    func updateAccessibilityLabel(_ label: String) {
+        for image in [outgoingImageView.image, incomingImageView.image] {
+            if image?.accessibilityDescription != label {
+                image?.accessibilityDescription = label
+            }
+        }
+    }
+
     func finishImmediately() {
         cancelAnimations()
         showImmediately(targetImage)
@@ -593,7 +601,7 @@ private final class StatusIconTransitionView: NSView {
 }
 
 @MainActor
-final class StatusBarController: NSObject, NSWindowDelegate {
+final class StatusBarController: NSObject, NSWindowDelegate, NSMenuDelegate {
     private enum StatusItemLayout {
         static let height: CGFloat = 16
     }
@@ -615,6 +623,7 @@ final class StatusBarController: NSObject, NSWindowDelegate {
     private var visualQAInitialTab: MainPanelView.PanelTab = .status
     private var visualQASettingsScrollAnchor: UnitPoint = .top
     private var stateCancellable: AnyCancellable?
+    private var isContextMenuOpen = false
     private var transitionState = StatusBarTransitionState()
     private var widthTransitionState = StatusBarWidthTransitionState(
         appliedTier: .standard
@@ -690,9 +699,24 @@ final class StatusBarController: NSObject, NSWindowDelegate {
     }
 
     private func bindViewModel() {
-        stateCancellable = viewModel.objectWillChange.sink { [weak self] _ in
+        stateCancellable = Self.observeStatusChanges(viewModel.objectWillChange) { [weak self] in
+            self?.updateStatusItem()
+        }
+    }
+
+    static func observeStatusChanges(
+        _ publisher: ObservableObjectPublisher,
+        update: @escaping @MainActor () -> Void
+    ) -> AnyCancellable {
+        var updatePending = false
+        return publisher.sink { _ in
+            guard !updatePending else { return }
+            updatePending = true
+            // objectWillChange precedes the writes. Read the final state once
+            // on the next main-queue turn, even when several properties change.
             DispatchQueue.main.async {
-                self?.updateStatusItem()
+                updatePending = false
+                update()
             }
         }
     }
@@ -700,8 +724,9 @@ final class StatusBarController: NSObject, NSWindowDelegate {
     private func updateStatusItem(forceImmediate: Bool = false) {
         let presentation = viewModel.menuBarPresentation
         let headerPresentation = viewModel.statusMenuHeaderPresentation
-        updateContextMenu()
-        statusItem.button?.setAccessibilityLabel(presentation.accessibilityLabel)
+        if isContextMenuOpen {
+            updateContextMenu()
+        }
         let snapshot = StatusBarTransitionSnapshot(
             title: presentation.title,
             iconTransitionIdentity: presentation.iconTransitionIdentity,
@@ -719,6 +744,10 @@ final class StatusBarController: NSObject, NSWindowDelegate {
         ) else {
             return
         }
+        let previous = transitionState.snapshot
+        if previous?.accessibilityLabel != snapshot.accessibilityLabel {
+            statusItem.button?.setAccessibilityLabel(snapshot.accessibilityLabel)
+        }
         let reduceMotion = forceImmediate
             || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         let transition = transitionState.transition(
@@ -734,20 +763,27 @@ final class StatusBarController: NSObject, NSWindowDelegate {
         )
         applyWidthTransition(widthTransition)
 
-        let image = RenewalRingArtwork.make(
-            fraction: headerPresentation.fraction,
-            tone: ringTone(for: headerPresentation.tone),
-            diameter: StatusBarWidthMetrics.iconWidth,
-            lineWidth: 1.6,
-            isTemplate: true
-        )
-        image.accessibilityDescription = presentation.accessibilityLabel
-        statusIconView.display(image: image, transition: transition.icon)
-        statusTitleView.display(
-            title: presentation.title,
-            font: StatusBarTitleFontProvider.font(for: presentation.titleFontStyle),
-            transition: transition.title
-        )
+        if forceImmediate || previous?.iconTransitionIdentity != snapshot.iconTransitionIdentity
+            || previous?.ringFraction != snapshot.ringFraction
+            || previous?.ringTone != snapshot.ringTone {
+            let image = RenewalRingArtwork.make(
+                fraction: headerPresentation.fraction,
+                tone: ringTone(for: headerPresentation.tone),
+                diameter: StatusBarWidthMetrics.iconWidth,
+                lineWidth: 1.6,
+                isTemplate: true
+            )
+            statusIconView.display(image: image, transition: transition.icon)
+        }
+        statusIconView.updateAccessibilityLabel(snapshot.accessibilityLabel)
+        if forceImmediate || previous?.title != snapshot.title
+            || previous?.titleFontStyle != snapshot.titleFontStyle {
+            statusTitleView.display(
+                title: presentation.title,
+                font: StatusBarTitleFontProvider.font(for: presentation.titleFontStyle),
+                transition: transition.title
+            )
+        }
     }
 
     private func applyWidthTransition(_ transition: StatusBarWidthTransition) {
@@ -850,14 +886,25 @@ final class StatusBarController: NSObject, NSWindowDelegate {
     }
 
     private func showContextMenu() {
-        updateContextMenu()
         statusItem.menu = contextMenu
         statusItem.button?.performClick(nil)
         statusItem.menu = nil
     }
 
+    func menuWillOpen(_ menu: NSMenu) {
+        guard menu === contextMenu else { return }
+        isContextMenuOpen = true
+        updateContextMenu()
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        guard menu === contextMenu else { return }
+        isContextMenuOpen = false
+    }
+
     private func configureContextMenu() {
         contextMenu.autoenablesItems = false
+        contextMenu.delegate = self
 
         for item in StatusMenuLayout.items(
             refreshTitle: viewModel.manualRefreshActionTitle
@@ -900,10 +947,18 @@ final class StatusBarController: NSObject, NSWindowDelegate {
             image: nil
         )
         let phase = viewModel.primaryJourneyPresentation.phase
-        reloadMenuItem?.isEnabled = phase != .checking
-            && phase != .deploying
-        refreshMenuItem?.title = viewModel.manualRefreshActionTitle
-        refreshMenuItem?.isEnabled = viewModel.canRefreshNow
+        let canReload = phase != .checking && phase != .deploying
+        if reloadMenuItem?.isEnabled != canReload {
+            reloadMenuItem?.isEnabled = canReload
+        }
+        let refreshTitle = viewModel.manualRefreshActionTitle
+        if refreshMenuItem?.title != refreshTitle {
+            refreshMenuItem?.title = refreshTitle
+        }
+        let canRefresh = viewModel.canRefreshNow
+        if refreshMenuItem?.isEnabled != canRefresh {
+            refreshMenuItem?.isEnabled = canRefresh
+        }
     }
 
     private func ringTone(

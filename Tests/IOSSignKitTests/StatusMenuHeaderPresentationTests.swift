@@ -230,6 +230,55 @@ struct StatusMenuHeaderPresentationTests {
     }
 
     @Test
+    @MainActor
+    func repeatedHeaderUpdatesReuseArtworkUntilRingChanges() throws {
+        let view = StatusMenuHeaderView()
+        let initial = StatusMenuHeaderPresentation(
+            tone: .info, fraction: 0.5, headline: "正在检查",
+            detail: "正在核对设备", centerText: "3"
+        )
+        view.update(presentation: initial, image: nil)
+        let icon = try #require(view.subviews.compactMap { $0 as? NSImageView }.first)
+        let originalImage = try #require(icon.image)
+
+        for _ in 0..<100 {
+            view.update(presentation: initial, image: nil)
+        }
+        #expect(icon.image === originalImage)
+
+        let detailChanged = StatusMenuHeaderPresentation(
+            tone: .info, fraction: 0.5, headline: "正在检查",
+            detail: "正在核对 App", centerText: "3"
+        )
+        view.update(presentation: detailChanged, image: nil)
+        #expect(icon.image === originalImage)
+        #expect(view.accessibilityLabel() == detailChanged.accessibilityLabel)
+
+        let progressChanged = StatusMenuHeaderPresentation(
+            tone: .info, fraction: 0.25, headline: "正在检查",
+            detail: "正在核对 App", centerText: "1"
+        )
+        view.update(presentation: progressChanged, image: nil)
+        #expect(icon.image !== originalImage)
+    }
+
+    @Test
+    @MainActor
+    func cachedHeaderArtworkRefreshesForAppearanceChanges() throws {
+        let view = StatusMenuHeaderView()
+        let presentation = StatusMenuHeaderPresentation(
+            tone: .info, fraction: 0.5, headline: "正在检查",
+            detail: "正在核对设备", centerText: "3"
+        )
+        view.update(presentation: presentation, image: nil)
+        let icon = try #require(view.subviews.compactMap { $0 as? NSImageView }.first)
+        let originalImage = try #require(icon.image)
+        view.viewDidChangeEffectiveAppearance()
+        #expect(icon.image !== originalImage)
+        #expect(view.accessibilityLabel() == presentation.accessibilityLabel)
+    }
+
+    @Test
     func ringFractionExpressesRemainingValidity() {
         let day = 24 * 60 * 60
         let oneDayOffline = StatusMenuHeaderPresentation.make(

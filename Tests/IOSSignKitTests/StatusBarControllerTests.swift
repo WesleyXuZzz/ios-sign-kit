@@ -1,8 +1,42 @@
 import AppKit
+import Combine
 import Testing
 @testable import IOSSignKit
 
 struct StatusBarControllerTests {
+    @Test
+    @MainActor
+    func statusNotificationsCoalesceAndReadTheFinalState() async {
+        let publisher = ObservableObjectPublisher()
+        var state = 0
+        var renderedStates: [Int] = []
+        let subscription = StatusBarController.observeStatusChanges(publisher) {
+            renderedStates.append(state)
+        }
+        for value in 1...100 {
+            publisher.send()
+            state = value
+        }
+        #expect(renderedStates.isEmpty)
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+        #expect(renderedStates == [100])
+
+        publisher.send()
+        state = 101
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+        #expect(renderedStates == [100, 101])
+        subscription.cancel()
+        publisher.send()
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+        #expect(renderedStates == [100, 101])
+    }
+
     @Test
     func firstPresentationUsesImmediateUpdates() {
         var state = StatusBarTransitionState()

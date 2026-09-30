@@ -14,6 +14,7 @@ final class StatusMenuHeaderView: NSView {
     private let headlineLabel = NSTextField(labelWithString: "")
     private let detailLabel = NSTextField(labelWithString: "")
     private let textStack = NSStackView()
+    private var lastPresentation: StatusMenuHeaderPresentation?
 
     override var intrinsicContentSize: NSSize {
         Layout.size
@@ -37,19 +38,46 @@ final class StatusMenuHeaderView: NSView {
         presentation: StatusMenuHeaderPresentation,
         image: NSImage?
     ) {
-        headlineLabel.stringValue = presentation.headline
-        detailLabel.stringValue = presentation.detail
-        let ringImage = RenewalRingArtwork.make(
-            fraction: presentation.fraction,
-            tone: ringTone(for: presentation.tone),
-            diameter: Layout.iconSize,
-            lineWidth: 4,
-            isTemplate: false,
-            centerText: presentation.centerText
-        )
-        iconView.image = ringImage
+        guard lastPresentation != presentation else { return }
+        let previous = lastPresentation
+        lastPresentation = presentation
+        if previous?.headline != presentation.headline {
+            headlineLabel.stringValue = presentation.headline
+        }
+        if previous?.detail != presentation.detail {
+            detailLabel.stringValue = presentation.detail
+        }
+        if previous?.fraction != presentation.fraction
+            || previous?.tone != presentation.tone
+            || previous?.centerText != presentation.centerText {
+            updateRing(presentation)
+        }
+        if previous?.accessibilityLabel != presentation.accessibilityLabel {
+            setAccessibilityLabel(presentation.accessibilityLabel)
+        }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        // The bitmap contains resolved colors; redraw on appearance changes,
+        // even if the business presentation has not changed.
+        if let lastPresentation {
+            updateRing(lastPresentation)
+        }
+    }
+
+    private func updateRing(_ presentation: StatusMenuHeaderPresentation) {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            iconView.image = RenewalRingArtwork.make(
+                fraction: presentation.fraction,
+                tone: ringTone(for: presentation.tone),
+                diameter: Layout.iconSize,
+                lineWidth: 4,
+                isTemplate: false,
+                centerText: presentation.centerText
+            )
+        }
         iconView.contentTintColor = nil
-        setAccessibilityLabel(presentation.accessibilityLabel)
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
