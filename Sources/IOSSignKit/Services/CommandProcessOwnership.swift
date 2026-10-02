@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import OSLog
 
 enum CommandOwnedProcessRecoveryOutcome: Equatable, Sendable {
     case notFound
@@ -212,6 +213,9 @@ private struct CommandOwnershipFileMarker:
 private struct CommandOwnershipMarkerStore: Sendable {
     private static let maximumMarkerBytes = 64 * 1_024
     private static let maximumMarkerCount = 4_096
+    private static let recoveryLogger = Logger(
+        subsystem: "iOSSignKit", category: "ProcessRecovery"
+    )
     let directoryURL: URL
 
     static let production = CommandOwnershipMarkerStore(
@@ -245,7 +249,13 @@ private struct CommandOwnershipMarkerStore: Sendable {
             throw CommandOwnershipMarkerError.invalidMarker
         }
         let url = markerURL(for: token)
-        let descriptor = url.path.withCString {
+        // Publish only a complete, locked marker. No child may inherit the
+        // descriptor until publication succeeds; interrupted preparation is
+        // therefore never mistaken for an abandoned running command.
+        let stagingURL = directoryURL.appendingPathComponent(
+            ".preparing-\(UUID().uuidString)"
+        )
+        let descriptor = stagingURL.path.withCString {
             open(
                 $0,
                 O_CREAT | O_EXCL | O_RDWR | O_CLOEXEC | O_NOFOLLOW,
@@ -284,7 +294,7 @@ private struct CommandOwnershipMarkerStore: Sendable {
             guard fsync(descriptor) == 0 else {
                 throw CommandOwnershipMarkerError.invalidMarker
             }
-            inheritedDescriptor = url.path.withCString {
+            inheritedDescriptor = stagingURL.path.withCString {
                 open($0, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
             }
             guard inheritedDescriptor >= 0 else {
@@ -303,6 +313,14 @@ private struct CommandOwnershipMarkerStore: Sendable {
             ) == 0 else {
                 throw CommandOwnershipMarkerError.invalidMarker
             }
+            let published = stagingURL.path.withCString { source in
+                url.path.withCString { destination in
+                    renamex_np(source, destination, UInt32(RENAME_EXCL))
+                }
+            }
+            guard published == 0 else {
+                throw CommandOwnershipMarkerError.cannotPublish(errno)
+            }
             close(descriptor)
             return PreparedCommandOwnershipFile(
                 descriptor: inheritedDescriptor
@@ -312,12 +330,15 @@ private struct CommandOwnershipMarkerStore: Sendable {
             if inheritedDescriptor >= 0 {
                 close(inheritedDescriptor)
             }
-            _ = url.path.withCString { unlink($0) }
+            _ = stagingURL.path.withCString { unlink($0) }
             throw error
         }
     }
 
-    func load(matching match: CommandEnvironmentMatch) throws
+    func load(
+        matching match: CommandEnvironmentMatch,
+        permitsEmptyMarkerQuarantine: Bool = false
+    ) throws
         -> [CommandOwnershipFileMarker] {
         switch match {
         case .exact(_, let token):
@@ -348,14 +369,126 @@ private struct CommandOwnershipMarkerStore: Sendable {
                         && $0.deletingPathExtension()
                             .lastPathComponent.hasPrefix(prefix)
                 }
-                .map {
-                    try decodeMarker(
-                        at: $0,
-                        expectedToken:
-                            $0.deletingPathExtension().lastPathComponent
-                    )
+                .sorted { $0.lastPathComponent < $1.lastPathComponent }
+                .compactMap { url -> CommandOwnershipFileMarker? in
+                    do {
+                        return try decodeMarker(
+                            at: url,
+                            expectedToken: url.deletingPathExtension().lastPathComponent
+                        )
+                    } catch {
+                        let decodingError = error
+                        if permitsEmptyMarkerQuarantine,
+                           try quarantineEmptyUnreferencedMarker(at: url) {
+                            return nil
+                        }
+                        throw decodingError
+                    }
                 }
         }
+    }
+
+    /// Only startup recovery may isolate an interrupted empty preparation.
+    /// Never infer process ownership from damaged JSON, a PID, or file age.
+    /// A complete kernel snapshot must prove that no other process references
+    /// this exact secure file while we exclusively hold its ownership lock.
+    private func quarantineEmptyUnreferencedMarker(at url: URL) throws -> Bool {
+        guard Self.isSupportedToken(url.deletingPathExtension().lastPathComponent),
+              let directoryStatus = try pathStatus(at: directoryURL),
+              Self.isSecureMarkerDirectory(directoryStatus) else {
+            return false
+        }
+        let descriptor = url.path.withCString {
+            open($0, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+        }
+        guard descriptor >= 0 else { return false }
+        defer { close(descriptor) }
+        var original = stat()
+        guard fstat(descriptor, &original) == 0,
+              Self.isSecureRegularMarker(original),
+              original.st_size == 0,
+              flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            return false
+        }
+        let identity = CommandOwnershipFileIdentity(fileStatus: original)
+        guard holdsOnlyCurrentProcessReference(descriptor, identity: identity) else {
+            return false
+        }
+        let capacity = 32_768
+        var identifiers = [pid_t](repeating: 0, count: capacity)
+        let byteCount = identifiers.withUnsafeMutableBytes { buffer in
+            url.path.withCString {
+                proc_listpidspath(
+                    UInt32(PROC_UID_ONLY), UInt32(geteuid()), $0, 0,
+                    buffer.baseAddress, Int32(buffer.count)
+                )
+            }
+        }
+        let identifierSize = MemoryLayout<pid_t>.size
+        guard byteCount > 0,
+              Int(byteCount) < capacity * identifierSize,
+              Int(byteCount) % identifierSize == 0 else {
+            return false
+        }
+        let references = identifiers.prefix(Int(byteCount) / identifierSize)
+        // Our descriptor must be visible too; otherwise the query did not
+        // establish the reference set for the file we actually opened.
+        guard references.contains(getpid()),
+              references.allSatisfy({ $0 == getpid() }),
+              let current = try pathStatus(at: url),
+              Self.isSecureRegularMarker(current),
+              current.st_size == 0,
+              CommandOwnershipFileIdentity(fileStatus: current) == identity else {
+            return false
+        }
+        let destination = directoryURL.appendingPathComponent(
+            ".quarantined-empty-\(UUID().uuidString)-\(url.lastPathComponent)"
+        )
+        let result = url.path.withCString { source in
+            destination.path.withCString {
+                renamex_np(source, $0, UInt32(RENAME_EXCL))
+            }
+        }
+        guard result == 0 else {
+            throw CommandOwnershipMarkerError.inspectionFailed(
+                fileName: url.lastPathComponent,
+                reason: "已确认空标记无其他进程引用，但无法隔离保留（errno=\(errno)）。"
+            )
+        }
+        Self.recoveryLogger.notice(
+            "已隔离无进程引用的空归属标记，保留文件：\(destination.lastPathComponent, privacy: .public)"
+        )
+        return true
+    }
+
+    private func holdsOnlyCurrentProcessReference(
+        _ descriptor: Int32,
+        identity: CommandOwnershipFileIdentity
+    ) -> Bool {
+        var descriptors = [proc_fdinfo](repeating: proc_fdinfo(), count: 65_536)
+        let size = MemoryLayout<proc_fdinfo>.size
+        let count = descriptors.withUnsafeMutableBytes {
+            proc_pidinfo(getpid(), PROC_PIDLISTFDS, 0, $0.baseAddress, Int32($0.count))
+        }
+        guard count > 0,
+              Int(count) < descriptors.count * size,
+              Int(count) % size == 0 else { return false }
+        let openDescriptors = descriptors.prefix(Int(count) / size)
+        guard openDescriptors.contains(where: { $0.proc_fd == descriptor }) else {
+            return false
+        }
+        for entry in openDescriptors where entry.proc_fd != descriptor
+            && entry.proc_fdtype == UInt32(PROX_FDTYPE_VNODE) {
+            var status = stat()
+            guard fstat(entry.proc_fd, &status) == 0 else {
+                if errno == EBADF { continue }
+                return false
+            }
+            if CommandOwnershipFileIdentity(fileStatus: status) == identity {
+                return false
+            }
+        }
+        return true
     }
 
     func remove(_ markers: [CommandOwnershipFileMarker]) throws {
@@ -417,6 +550,20 @@ private struct CommandOwnershipMarkerStore: Sendable {
         at url: URL,
         expectedToken: String
     ) throws -> CommandOwnershipFileMarker {
+        do {
+            return try decodeMarkerContents(at: url, expectedToken: expectedToken)
+        } catch {
+            throw CommandOwnershipMarkerError.inspectionFailed(
+                fileName: url.lastPathComponent,
+                reason: error.localizedDescription
+            )
+        }
+    }
+
+    private func decodeMarkerContents(
+        at url: URL,
+        expectedToken: String
+    ) throws -> CommandOwnershipFileMarker {
         guard Self.isSupportedToken(expectedToken) else {
             throw CommandOwnershipMarkerError.invalidToken
         }
@@ -424,16 +571,18 @@ private struct CommandOwnershipMarkerStore: Sendable {
             open($0, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
         }
         guard descriptor >= 0 else {
-            throw CommandOwnershipMarkerError.invalidMarker
+            throw CommandOwnershipMarkerError.cannotRead(errno)
         }
         defer { close(descriptor) }
 
         var fileStatus = stat()
         guard fstat(descriptor, &fileStatus) == 0,
               Self.isSecureRegularMarker(fileStatus),
-              fileStatus.st_size > 0,
               fileStatus.st_size <= Self.maximumMarkerBytes else {
             throw CommandOwnershipMarkerError.invalidMarker
+        }
+        guard fileStatus.st_size > 0 else {
+            throw CommandOwnershipMarkerError.emptyMarker
         }
         let data = try Self.readAll(
             from: descriptor,
@@ -563,10 +712,33 @@ private enum CommandOwnershipLockState {
     case unavailable
 }
 
-private enum CommandOwnershipMarkerError: Error {
+private enum CommandOwnershipMarkerError: Error, LocalizedError {
     case invalidToken
     case invalidMarker
     case cannotCreate(Int32)
+    case cannotPublish(Int32)
+    case cannotRead(Int32)
+    case emptyMarker
+    case inspectionFailed(fileName: String, reason: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidToken:
+            return "命令归属令牌无效。"
+        case .invalidMarker:
+            return "命令归属标记的内容、权限或文件身份无法通过校验。"
+        case .cannotCreate(let code):
+            return "无法创建命令归属标记（errno=\(code)）。"
+        case .cannotPublish(let code):
+            return "无法原子发布命令归属标记（errno=\(code)）。"
+        case .cannotRead(let code):
+            return "无法读取命令归属标记（errno=\(code)）。"
+        case .emptyMarker:
+            return "命令归属标记为空，无法证明关联进程的归属；已保留文件。"
+        case .inspectionFailed(let fileName, let reason):
+            return "归属标记 \(fileName)：\(reason)"
+        }
+    }
 }
 
 struct PreparedCommandOwnershipFile: Sendable {
@@ -814,60 +986,73 @@ struct CommandProcessOwnershipTracker: Sendable {
     }
 
     func recoverAllOwnedProcesses() -> CommandOwnedProcessRecoveryOutcome {
+        switch recoverAllOwnedProcessesWithDiagnostics() {
+        case .notFound: return .notFound
+        case .terminated: return .terminated
+        case .unresolved: return .unresolved
+        }
+    }
+
+    func recoverAllOwnedProcessesWithDiagnostics() -> DeploymentProcessRecoveryOutcome {
         let totalDeadline = DispatchTime.now() + 2.5
-        guard case .found(let initialProcesses) =
-                matchingProcessIdentifiers(until: totalDeadline) else {
-            return .unresolved
+        let initialProcesses: Set<pid_t>
+        switch matchingProcessIdentifiers(until: totalDeadline) {
+        case .found(let identifiers):
+            initialProcesses = identifiers
+        case .unavailable(let diagnostic):
+            return .unresolved(diagnostic)
         }
         guard !initialProcesses.isEmpty else {
             return removeMarkerIfPresent()
                 ? .notFound
-                : .unresolved
+                : .unresolved("未发现关联进程，但归属标记尚未安全结算。")
         }
         guard signalOwnedProcesses(
             initialProcesses,
             signal: SIGTERM,
             deadline: totalDeadline
         ) else {
-            return .unresolved
+            return .unresolved("无法重新确认进程归属或发送终止信号。")
         }
         if waitForOwnedProcessesToExit(
-            until: earlier(
-                DispatchTime.now() + 0.25,
-                totalDeadline
-            )
+            until: earlier(DispatchTime.now() + 0.25, totalDeadline)
         ) {
             return removeMarkerIfPresent()
                 ? .terminated
-                : .unresolved
+                : .unresolved("关联进程已退出，但归属标记尚未安全结算。")
         }
 
-        guard case .found(let survivors) =
-                matchingProcessIdentifiers(until: totalDeadline),
-              signalOwnedProcesses(
-                  survivors,
-                  signal: SIGKILL,
-                  deadline: totalDeadline
-              ) else {
-            return .unresolved
+        let survivors: Set<pid_t>
+        switch matchingProcessIdentifiers(until: totalDeadline) {
+        case .found(let identifiers):
+            survivors = identifiers
+        case .unavailable(let diagnostic):
+            return .unresolved(diagnostic)
+        }
+        guard signalOwnedProcesses(
+            survivors,
+            signal: SIGKILL,
+            deadline: totalDeadline
+        ) else {
+            return .unresolved("关联进程尚未退出，无法确认归属或完成终止。")
         }
         if waitForOwnedProcessesToExit(until: totalDeadline) {
             return removeMarkerIfPresent()
                 ? .terminated
-                : .unresolved
+                : .unresolved("关联进程已退出，但归属标记尚未安全结算。")
         }
-        return .unresolved
+        return .unresolved("恢复等待已结束，仍无法确认所有关联进程和归属锁均已释放。")
     }
 
     private enum ProcessScan {
         case found(Set<pid_t>)
-        case unavailable
+        case unavailable(String)
     }
 
     private enum MarkerScanPreparation {
         case none
         case ready([CommandOwnershipFileMarker])
-        case unavailable
+        case unavailable(String)
     }
 
     private func markersRequiringProcessScan()
@@ -875,10 +1060,11 @@ struct CommandProcessOwnershipTracker: Sendable {
         let loadedMarkers: [CommandOwnershipFileMarker]
         do {
             loadedMarkers = try markerStore.load(
-                matching: match
+                matching: match,
+                permitsEmptyMarkerQuarantine: markerCreatorPolicy == .abandonedOnly
             )
         } catch {
-            return .unavailable
+            return .unavailable(DiagnosticText.bounded(error.localizedDescription))
         }
         var lockedMarkers: [CommandOwnershipFileMarker] = []
         for marker in loadedMarkers {
@@ -889,7 +1075,7 @@ struct CommandProcessOwnershipTracker: Sendable {
                 case .abandoned:
                     break
                 case .unavailable:
-                    return .unavailable
+                    return .unavailable("无法核验归属标记 \(marker.token).json 的创建进程身份。")
                 }
             }
             switch markerStore.inspectOwnershipLock(for: marker) {
@@ -899,22 +1085,20 @@ struct CommandProcessOwnershipTracker: Sendable {
                 do {
                     try markerStore.remove([marker])
                 } catch {
-                    return .unavailable
+                    return .unavailable("无法结算已释放的归属标记 \(marker.token).json。")
                 }
             case .unavailable:
-                return .unavailable
+                return .unavailable("无法核验归属标记 \(marker.token).json 的文件身份或锁状态。")
             }
         }
-        return lockedMarkers.isEmpty
-            ? .none
-            : .ready(lockedMarkers)
+        return lockedMarkers.isEmpty ? .none : .ready(lockedMarkers)
     }
 
     private func matchingProcessIdentifiers(
         until deadline: DispatchTime
     ) -> ProcessScan {
         guard DispatchTime.now() < deadline else {
-            return .unavailable
+            return .unavailable("核验遗留命令超过恢复时限。")
         }
         let markers: [CommandOwnershipFileMarker]
         if usesPersistentMarkers {
@@ -923,8 +1107,8 @@ struct CommandProcessOwnershipTracker: Sendable {
                 return .found([])
             case .ready(let lockedMarkers):
                 markers = lockedMarkers
-            case .unavailable:
-                return .unavailable
+            case .unavailable(let diagnostic):
+                return .unavailable(diagnostic)
             }
         } else {
             markers = []
@@ -934,21 +1118,17 @@ struct CommandProcessOwnershipTracker: Sendable {
             : processListProvider()
         guard case .available(let identifiers) = processListInspection,
               identifiers.count <= Self.maximumProcessCount else {
-            return .unavailable
+            return .unavailable("无法完整读取引用归属标记的进程列表。")
         }
 
         var matching: Set<pid_t> = []
         for identifier in identifiers
             where identifier > 1 && identifier != getpid() {
             guard DispatchTime.now() < deadline else {
-                return .unavailable
+                return .unavailable("核验遗留命令超过恢复时限。")
             }
             if usesPersistentMarkers {
-                let ownershipInspection =
-                    Self.inspectProcessMarkerFile(
-                        identifier,
-                        markers: markers
-                    )
+                let ownershipInspection = Self.inspectProcessMarkerFile(identifier, markers: markers)
                 switch ownershipInspection {
                 case .matched:
                     switch processOwnerInspector(identifier) {
@@ -957,19 +1137,17 @@ struct CommandProcessOwnershipTracker: Sendable {
                     case .otherUser, .exited:
                         continue
                     case .unavailable:
-                        return .unavailable
+                        return .unavailable("无法确认进程 \(identifier) 的所属用户。")
                     }
                 case .absent, .exited:
                     continue
                 case .unavailable:
-                    // An inaccessible process cannot own a 0600 marker from
-                    // another UID. Only a stable current-UID process remains
-                    // a safety-relevant uncertainty.
+                    // Other users cannot own this user's secure marker.
                     switch processOwnerInspector(identifier) {
                     case .otherUser, .exited:
                         continue
                     case .currentUser, .unavailable:
-                        return .unavailable
+                        return .unavailable("无法读取进程 \(identifier) 的归属描述符；保留进程并阻止续签。")
                     }
                 }
                 continue
@@ -979,19 +1157,17 @@ struct CommandProcessOwnershipTracker: Sendable {
             case .otherUser, .exited:
                 continue
             case .unavailable:
-                return .unavailable
+                return .unavailable("无法确认进程 \(identifier) 的所属用户。")
             case .currentUser:
                 break
             }
-            let ownershipInspection =
-                processTokenInspector(identifier, match)
-            switch ownershipInspection {
+            switch processTokenInspector(identifier, match) {
             case .matched:
                 matching.insert(identifier)
             case .absent, .exited:
                 continue
             case .unavailable:
-                return .unavailable
+                return .unavailable("无法读取进程 \(identifier) 的归属令牌。")
             }
         }
         return .found(matching)

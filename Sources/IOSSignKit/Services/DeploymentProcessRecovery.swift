@@ -25,15 +25,13 @@ struct CommandProcessRecovery: Sendable {
                 onlyAbandonedCreators: true
             )
         recoverAnyCommandClosure = {
-            switch ownershipTracker.recoverAllOwnedProcesses() {
+            switch ownershipTracker.recoverAllOwnedProcessesWithDiagnostics() {
             case .notFound:
                 return .notFound
             case .terminated:
                 return .terminated
-            case .unresolved:
-                return .unresolved(
-                    "无法核验或终止所有携带归属标记的遗留普通命令。"
-                )
+            case .unresolved(let diagnostic):
+                return .unresolved("遗留普通命令恢复未完成：\(diagnostic)")
             }
         }
     }
