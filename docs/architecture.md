@@ -27,6 +27,7 @@ iOSSignKit 是基于 Swift 6.3、SwiftUI 和 AppKit 的 macOS 菜单栏应用，
 | `Sources/IOSSignKit/Resources/LANControlWeb` | 局域网控制页的 HTML、CSS 与 JavaScript 静态资源 |
 | `Sources/IOSSignKit/Debug` | 仅 Debug 可用的确定性 Visual QA 场景 |
 | `Tests/IOSSignKitTests` | 领域规则、服务边界、恢复与展示契约测试 |
+| `Tests/LANControlWebTests` | 局域网页面的状态渲染、焦点、动效和轮询契约测试 |
 | `scripts` | 构建、安装、产物验收、并发测试、空间审计、公开源码检查和双镜像推送脚本 |
 | `config` | 发布元数据和运行时资源清单 |
 
@@ -68,18 +69,18 @@ flowchart LR
 
 `MenuBarViewModel` 是 SwiftUI façade，发布界面需要的状态、接收用户意图并编排工作流模块。设备刷新主任务、部署生命周期、自动倒计时与等待、状态结算分别由深模块拥有；ViewModel 仍负责把工作流结果适配到系统通知、菜单栏和页面展示。可独立判断的行为保留在策略对象、纯转换和类型化 Presentation 中，以便通过模块接口测试和复用。
 
-`RefreshScheduler` 是刷新链路唯一的业务时间边界，同时提供当前墙钟时间和可取消等待。生产环境统一使用 `continuous` adapter；测试使用手动 adapter 显式推进虚拟时间。自动刷新倒计时、自动等待、系统唤醒补检、连接确认和安装检查重试不得再各自注入互不关联的时钟或休眠闭包。
+`RefreshScheduler` 是刷新工作流统一的业务时间边界，同时提供当前墙钟时间和可取消等待。生产环境统一使用 `continuous` adapter；测试使用手动 adapter 显式推进虚拟时间。自动刷新倒计时、自动等待、系统唤醒补检、连接确认和安装检查重试不得再各自注入互不关联的时钟或休眠闭包。ViewModel 的周期检查入口和剩余有效期显示使用 Foundation `Timer`；它们的容差由 `TimerCoalescingPolicy` 管理，不承担工作流等待。
 
 ## 4. 启动与生命周期
 
 启动路径如下：
 
-1. `IOSSignKitApp` 建立 SwiftUI 应用入口并接入 `AppDelegate`。
+1. `IOSSignKitApp` 建立 SwiftUI 应用入口并接入 `AppDelegate`，仅用空 `Settings` 场景承接生命周期；macOS 15 及以上显式抑制该占位场景的默认启动和窗口恢复，真实设置由 AppKit 主面板展示。
 2. `AppDelegate` 获取 `ApplicationInstanceLock`，阻止同一用户会话中多实例并发；真实 App 入口随后执行普通命令和部署前缀的全局遗留扫描。
 3. `AppBootstrapper` 加载配置与运行状态，并清除旧配置中的 `deployScriptPath`。存在精确部署令牌时，`DeploymentProcessRecovery` 先按令牌确认所有相关进程组已经终止或不存在。
 4. 只有进程恢复已确认时，启动恢复才继续按精确令牌执行“构建工作区清理 → Provisioning Profile 缓存恢复 → 宿主安装回执核对”。Profile 或回执失败时保留令牌并阻断新续签；工作区清理失败只追加有界警告。
 5. 完成基础环境校验，初始化设备检测策略、`SystemWakeMonitor`、`MenuBarViewModel` 和 `StatusBarController`。
-6. 预加载主面板并触发首次环境、设备和安装状态刷新。
+6. 触发首次环境、设备和安装状态刷新，并异步预加载主面板；正常启动预加载不主动显示窗口。
 
 主窗口平时由状态栏控制器持有。左键菜单栏图标打开或恢复窗口；窗口关闭后应用继续以菜单栏形态运行。单实例锁、遗留进程所有权和登录项是不同层面的约束，不能互相替代。
 
@@ -148,16 +149,16 @@ Swift、SwiftUI 或 Objective-C 不是能力边界；是否生成可独立安装
 设备检测策略由 `DeviceDetectionRolloutController` 和 `DeviceDetectionRolloutConfiguration` 集中控制：
 
 - `fallback`：使用兼容检测路径。
-- `shadow`：主路径执行，同时记录对照差异。
-- `readOnly`：只读核验，禁止部署。
+- `shadow`：兼容检测路径驱动业务，同时以正式检测引擎进行纯计算对照。
+- `readOnly`：正式检测路径驱动只读观察，同时对照兼容引擎，禁止提醒、配对、倒计时和部署等关键动作。
 - `production`：使用正式检测路径，生产默认值。
 
-环境变量 `IOS_SIGN_KIT_DEVICE_DETECTION_POLICY` 只接受以上四值。非法非空值必须失败关闭到 `readOnly` 并显示诊断，不能猜测用户意图。
+环境变量 `IOS_SIGN_KIT_DEVICE_DETECTION_POLICY` 未设置时使用 `production`；显式设置时只接受以上四值。空字符串、含额外空白或其他非法值均失败关闭到 `readOnly` 并显示诊断，不能猜测用户意图。正式 `DeploymentTarget` 只用于 `production`，兼容目标只用于 `fallback` / `shadow`，提交点再次检查目标类型与策略是否一致。
 
 设备安全不变量：
 
-- `DeviceMatcher` 优先匹配稳定设备 ID；固定 ID 缺失时不回退名称。
-- 同名设备视为歧义，不能构造部署目标。
+- `DeviceMatcher` 优先匹配稳定设备 ID；已配置的固定 ID 不可用时不回退名称。
+- 没有固定 ID、仅按名称匹配且存在多台同名设备时视为歧义；固定 ID 的精确匹配优先于名称。
 - `DeviceConnectionReducer` 独占连接确认暂态，避免多个扫描来源各自改变全局状态。
 - `RefreshSessionCaches` 只用于候选筛选，不能直接授权提醒、配对、倒计时或部署。
 - 设置页设备扫描与部署前检测必须遵循同一检测策略。
@@ -219,11 +220,16 @@ flowchart TD
 
 等待节奏由 `AutomaticRefreshWaitCoordinator` 统一管理：设备已锁定每 `30` 秒、锁态未知每 `60` 秒、Xcode destination 准备中每 `120` 秒；连续等待超过 `2` 小时后统一为 `300` 秒。Mac 唤醒后优先在 `+5` 和 `+20` 秒补检。
 
-等待期间 `DeviceLockEventObserver` 以 utility QoS 常驻一个 `devicectl device notification observe` 会话，监听目标设备的 `com.apple.springboard.lockstate`。该通知不携带锁态，每次收到只会立即触发一次既有锁态探测，并在 `3` 秒后补测一次；解锁仍以 `lockState` 结果为准。观察会话连接期间，锁屏与锁态未知的周期探测放宽为 `300` 秒兜底；会话中断即恢复原节奏，未连接的会话按 `30 → 60 → 120 → 300` 秒退避重连，无法确认进程树退出时停止观察而不叠加进程。等待结束、恢复部署或取消时立即停止观察。
+等待期间 `DeviceLockEventObserver` 以 utility QoS 常驻一个 `devicectl device notification observe` 会话，监听目标设备的 `com.apple.springboard.lockstate`。该通知不携带锁态；锁屏或锁态未知等待期间收到通知会立即触发一次既有锁态探测，并在 `3` 秒后补测一次，解锁仍以 `lockState` 结果为准。观察会话连接期间，锁屏与锁态未知的周期探测放宽为 `300` 秒兜底；会话中断即恢复原节奏，未连接的会话按 `30 → 60 → 120 → 300` 秒退避重连，无法确认进程树退出时停止观察而不叠加进程。Xcode destination 准备等待不由锁态事件触发探测。等待结束、恢复部署或取消时立即停止观察。
 
 普通轮询、系统唤醒和用户`重新检查`共用等待期间的单一探测循环，任一时刻最多一个锁态探测或部署预检。只有部署进程即将真实启动时才记录自动尝试时间。
 
 自动初次部署明确返回 `device_preparation_required` 时，在重新核对设备、配置、安装实例、策略和到期条件后最多恢复一次；再次失败至少退避 `10` 分钟。手动刷新和恢复尝试本身不能递归重试。
+
+后台调度与命令优先级：
+
+- `TimerCoalescingPolicy` 将周期检查 Timer 的容差设为间隔的 `10%`，上限 `60` 秒；剩余有效期显示按下一次文本变化安排单次 Timer，容差上限 `2` 秒，秒级倒计时为 `0.05` 秒。这些是系统合并唤醒的容差，不改变配置中的检查周期或业务等待规则。
+- `CommandSpawnQualityOfService` 通过 Task Local 将后台轮询、App 元信息补查和后台自动恢复检查的子命令设为 utility QoS；前台检查、连接确认及部署命令保持默认 QoS。锁态事件观察命令也使用 utility QoS。
 
 ## 10. 部署边界
 
@@ -264,7 +270,7 @@ Profile 缓存属于用户级共享状态，恢复必须服从部署进程所有
 - `iOSSignKit/logs/`：部署日志，默认最多 `200` 份、合计不超过 `256 MiB`，且至少保留最新一份。
 - `iOSSignKit/Install Receipts/`：按精确部署令牌保存带 SHA-256 的 `prepared` / `installed` 宿主回执；单份最多 `64 KiB`，默认最多 `200` 份、合计不超过 `8 MiB`。
 - `iOSSignKit/Provisioning Profile Backups/`：Profile 缓存事务备份、原路径映射、摘要和恢复清单；只允许精确令牌恢复。
-- `.instance.lock`：同一用户会话的单实例锁。
+- `iOSSignKit/.instance.lock`：同一用户会话的单实例锁。
 
 部署工作区不进入 Application Support，而位于用户缓存目录 `~/Library/Caches/iOSSignKit/Deployments/<部署令牌>/`。工作区、Profile 事务目录与回执目录必须为 `0700`，敏感清单和回执文件必须为 `0600`；清理只接受规范部署令牌指向的直接子目录，不跟随符号链接。
 
@@ -272,10 +278,12 @@ Profile 缓存属于用户级共享状态，恢复必须服从部署进程所有
 
 局域网控制边界：
 
-- `LANControlServerController` 使用 Network.framework 管理 TCP 监听，只接受回环、链路本地、私有 IPv4、`.local` 和本地 IPv6 来源；服务默认关闭，端口限制为 `1024...65535`。
+- `LANControlServerController` 使用 Network.framework 管理指定端口的 TCP 监听，只接受回环、链路本地、私有 IPv4、`.local` 和本地 IPv6 来源；服务默认关闭，端口默认 `51888`、限制为 `1024...65535`。`accessHost` 只生成用户访问链接，不绑定监听接口；当前配置接受主机名或 IPv4 地址，不接受带冒号的 IPv6 字面量。
 - `LANControlHTTPApplication` 提供静态资源、密码登录、一次性配对、状态读取、重新检查与续签接口。登录会话只保存在内存中并在 `8` 小时后失效；配对令牌 `120` 秒后失效且消费一次即删除，关闭服务或修改凭据会清空二者。
 - 服务只提供 HTTP，因此认证能力不能被描述为传输加密；用户界面和文档必须明确其仅适合受信任的本地网络。
-- 控制页只消费 `LANControlSnapshot` 并提交 `LANControlAction`。远程动作经 `MenuBarViewModel` 进入现有状态判断；需要现场选择 Profile 策略时拒绝远程续签，浏览器不能构造部署目标、跳过预检或直接调用部署服务。
+- 控制页只消费 `LANControlSnapshot` 并提交 `LANControlAction`。`POST /api/renew` 可以携带 `profileRefreshMode: "force"` 或 `"auto"`；未提供策略且当前状态需要选择时，返回 HTTP `409` 和 `requiresProfileChoice`，由网页展示选择弹层。非法策略返回 `400`，接受请求返回 `202`，表示进入续签流程而非安装已经成功。
+- 远程续签经 `MenuBarViewModel.requestLANControlRenewal` 重新核对当前状态，已确认到期时统一使用 `force`，其他可操作状态采用用户提交的策略，并以手动来源进入既有完整预检。浏览器不能构造部署目标、指定设备或项目、跳过预检或直接调用部署服务；网页策略选择本身不是部署授权。
+- 浏览器会话令牌保存在当前标签页的 `sessionStorage`。页面可见时每 `5` 秒读取状态，隐藏时暂停轮询和动画，恢复后立即读取一次再恢复定时器；退出或会话失效后停止轮询。状态接口只返回快照，不启动设备扫描。
 
 系统集成边界：
 
@@ -290,12 +298,16 @@ Profile 缓存属于用户级共享状态，恢复必须服从部署进程所有
 
 菜单栏、主面板和系统通知消费同一业务状态，但使用各自的 Presentation。它们不能各自重新判断设备是否可部署，也不能因某个表面关闭提示而改变持久化状态。
 
+`StatusBarController` 把同一轮 `objectWillChange` 合并到下一次主队列更新，比较展示快照后只修改有变化的字段并复用未变化的图像；右键菜单打开时同步最新状态，`StatusMenuHeaderView` 仅在图形内容或有效外观变化时重绘位图。工作台可见性控制续期环与水位动画的暂停。顶部品牌环与水位组件自身时间线使用 `30 fps`；主状态卡普通动效下的检查、部署和结果过渡由父时间线按 `60 fps` 驱动，并向水位组件传递 `elapsedOverride`。Reduce Motion 关闭循环视觉效果，但检查与部署的父时间线仍以 `0.25` 秒间隔更新展示。
+
 ## 14. 构建、资源与发布
 
 项目以 Swift Package 为主入口，不以 `.xcodeproj` 作为仓库工程事实源。
 
 - `scripts/build-app.sh` 构建并组装标准 `.app`，默认 release；显式传入 `dmg` 才生成 DMG。
+- 打包与 `scripts/install-app.sh` 共用 `dist/.build-app.lock`；打包使用暂存目录，组装与签名校验完成后才替换正式输出，替换失败尝试恢复原产物。安装脚本只移动已核验的正式 App，要求 App 已正常退出，不负责构建或启动。
 - `config/release-metadata.json` 是展示名、可执行名、Bundle ID、版本和最低系统版本的发布元数据事实源。
+- `scripts/validate-release-metadata.sh` 是打包、安装和产物验收共享的元数据校验入口；版本递增由维护者在元数据中完成，脚本不自动递增。具体规则见 `AGENTS.md`。
 - 根目录 `AppIcon.icon` 是正式 App Icon 的唯一打包源。
 - `config/runtime-resources.tsv` 是通知附件和局域网页面静态文件等运行时资源的边界；打包、测试和产物验收共同消费该清单。
 - `scripts/verify-release-artifacts.sh` 验证签名、图标、资源边界、压缩格式、卷结构和体积。
@@ -306,7 +318,7 @@ GitHub `master` 是仓库唯一的日常开发事实源；私有仓库只镜像�
 
 修改架构时优先保持以下契约：
 
-1. 固定设备 ID 缺失或歧义时禁止部署，不回退到名称猜测。
+1. 已固定的设备 ID 不可用或目标匹配有歧义时禁止部署，不回退到名称猜测。
 2. 只有唯一精确匹配的 `iphoneos` App Target 可以部署；Framework、Library 和其他容器候选不能被静默提升为可安装目标。
 3. 缓存和历史只帮助筛选或展示，不能授权提醒、配对或部署。
 4. 目标、Bundle ID、安装实例和策略代次变化后，丢弃旧异步结果与旧过期证据。
@@ -319,11 +331,13 @@ GitHub `master` 是仓库唯一的日常开发事实源；私有仓库只镜像�
 11. UI、菜单栏、通知和日志共享事实，不各自实现一套业务判断。
 12. 登录项始终显示可识别的 App 身份，并直接启动稳定具名可执行文件。
 13. 文档只描述当前稳定架构，不用开发阶段名称保存并行事实源。
-14. 局域网控制默认关闭且不能扩大部署授权；未经认证、需要现场策略选择或既有预检不通过时都不得开始续签。
+14. 局域网控制默认关闭且不能扩大部署授权；未经认证、需要策略选择却未选择或既有预检不通过时都不得提交部署。
 
 ## 16. 测试与变更落点
 
 测试使用 Swift Testing，重点覆盖环境与目标解析、设备来源合并、匹配安全、到期推断、提醒策略、自动等待、部署恢复、进程所有权、持久化、历史摘要和展示模型。
+
+局域网页面的 JavaScript 契约测试位于 `Tests/LANControlWebTests/motion.test.cjs`，使用 `node --test Tests/LANControlWebTests/motion.test.cjs` 单独执行，不包含在 `swift test` 中，也不替代真实浏览器验收。`DeviceMonitorLiveReadOnlyTests` 只在显式设置 `IOS_SIGN_KIT_RUN_LIVE_DEVICE_READ_ONLY=1` 时执行设备查询，默认测试不提供真机验收结论。
 
 普通异步工作流测试通过 `ManualRefreshScheduler` 显式推进业务时间，并优先等待 collaborator 的类型化事件或任务结算接口。正向断言不得用真实毫秒休眠或墙钟 deadline 轮询状态；负向断言应在调度队列排空且所属任务结算后检查事件快照。允许使用独立、宽松的真实时间 watchdog 防止测试永久挂起，但 watchdog 不参与正常状态推进。
 
@@ -334,9 +348,10 @@ GitHub `master` 是仓库唯一的日常开发事实源；私有仓库只镜像�
 - Project/Workspace 发现与 App Target：`EnvironmentValidatorTests`、`XcodeProjectResolverTests`。
 - 设备检测与匹配：`DeviceMonitorTests`、`DeviceRefreshWorkflowTests`、`DeviceRefreshSnapshotReducerTests`、`DeviceMatcherTests`、检测策略相关测试。
 - 到期与提醒：`ExpiryInspectorTests`、`ReminderPolicyTests`、`RefreshPolicySafetyTests`、配置迁移与 ViewModel 设置测试。
+- 自动等待与节能调度：`AutomaticRefreshWaitCoordinatorTests`、`DeviceLockEventObserverTests`、`EnergyEfficiencyPolicyTests`。
 - 部署与恢复：`DeploymentPreflightWorkflowTests`、`DeployServiceTests`、`StandardIOSDeploymentTests`、`ProvisioningProfileCacheTransactionTests`、`SignedIOSAppInspectorTests`、`HostInstallReceiptStoreTests`、`CommandRunnerTests`、`DeployFailureAnalyzerTests`、`RefreshStateSettlementTests`、恢复相关测试。
 - 操作反馈：`OperationActivityPresentationTests` 和 ViewModel 的安全测试。
-- 设置与局域网控制：`SettingsControlDesignTests`、`CommandCenterVisualContractTests`、`LANControlConfigurationTests`、`LANControlHTTPApplicationTests`。
+- 设置与局域网控制：`SettingsControlDesignTests`、`CommandCenterVisualContractTests`、`InterfaceInteractionTests`、`LANControlConfigurationTests`、`LANControlHTTPApplicationTests`、`MenuBarViewModelLockStateTests` 和网页 JavaScript 契约测试。
 - 打包资源：`PackagedResourceContractTests` 和 `scripts/verify-release-artifacts.sh`。
 
 结构、模块边界、主旅程或设计系统发生变化前，先与维护者确认文档更新范围。需要在 `docs/` 新增、拆分或重命名文件时也必须先确认；当前长期文档只保留本文和 `ui-guidelines.md`。

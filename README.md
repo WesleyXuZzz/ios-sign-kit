@@ -6,6 +6,14 @@
 
 这个仓库本身不是 iOS App 工程，而是一个 macOS 菜单栏辅助工具。它负责监控设备、判断签名过期时间、触发提醒或自动刷新，并直接通过 Xcode 与 `devicectl` 构建、核验和安装所选 iOS App；目标项目不需要提供 iOSSignKit 专用脚本。
 
+## 文档导航
+
+- 本文：使用、配置、本地开发、打包和源码同步。
+- [项目架构](docs/architecture.md)：模块职责、运行链路、数据与安全边界。
+- [界面规范](docs/ui-guidelines.md)：导航、视觉、交互和可访问性约定。
+- [开发协作约定](AGENTS.md)：修改范围、验证要求和文档维护规则。
+- [安全策略](SECURITY.md)、[资产来源与授权](ASSET_PROVENANCE.md)、[许可证](LICENSE)：安全报告与公开分发边界。
+
 ## 功能概览
 
 - 菜单栏常驻展示目标 iPhone 的连接状态、签名剩余有效期、检查/倒计时/刷新进度、刷新结果与异常状态
@@ -30,12 +38,13 @@
 
 ## 局域网控制
 
-在“设置 > 局域网”中可显式启用本机控制页，设置访问主机、`1024...65535` 端口和至少 6 个字符的控制密码。服务运行后可以复制完整链接，或生成 `120` 秒内有效、只能使用一次的配对二维码。控制页展示当前设备、签名状态和续签阶段，并提供重新检查与重新签名安装操作。
+在“设置 > 局域网”中可显式启用本机控制页，设置访问主机、端口和至少 6 个字符的控制密码，再点击“存储更改”。端口默认为 `51888`，允许 `1024...65535`。访问主机填写同一网络内能访问这台 Mac 的主机名或 IPv4 地址，不带协议、端口或路径；该字段用于生成链接，并不限制监听网卡。服务运行后可以复制完整链接，或生成 `120` 秒内有效、只能使用一次的配对二维码。控制页展示当前设备、签名状态和续签阶段，并提供重新检查与重新签名安装操作。
 
 - 服务默认关闭，并拒绝公网来源地址；它只提供 HTTP，因此只应在受信任的本地网络中使用。
 - 配置文件不保存密码明文，只保存带随机盐的迭代摘要。密码登录和二维码配对生成的会话在内存中保持 `8` 小时；关闭服务或修改密码会清空已有会话和配对令牌。
 - 一分钟内连续 8 次登录失败后，服务会暂时拒绝更多密码尝试。
-- 远程续签复用 Mac 端既有的设备、状态与部署安全判断。当前状态需要用户选择 Profile 策略时，控制页会拒绝操作并要求回到 Mac；浏览器不能绕过预检或自行指定目标。
+- 远程续签复用 Mac 端手动操作的安全判断。已确认当前安装到期时使用 `force`；未到期、有效期未知或安装状态未确认等需要选择的情况，会在网页内提供更新描述文件（`force`）、优先复用（`auto`）和取消。选择提交后，Mac 会重新判断当前条件并执行完整部署预检；浏览器不能自行指定设备、项目或部署目标。
+- 控制页可见时每 `5` 秒读取状态，隐藏时暂停定时轮询和页面动画，恢复可见后立即补读一次。读取状态不会触发设备扫描；“重新检查”才会请求 Mac 重新检查环境与设备。
 
 ## 前置条件
 
@@ -43,6 +52,14 @@
 - 包含 Swift 6.3 工具链的 Xcode，以及对应的 Xcode Command Line Tools
 - 一台已配对、可通过 Xcode 工具链访问的 iPhone
 - 一个包含可构建 iOS App Target、自动签名配置和有效 Development Team 的 Xcode 项目
+
+### 首次配置
+
+1. 打开菜单栏主面板，点击“开始配置”，或进入“设置 > 目标”。
+2. 扫描并固定目标 iPhone，选择 iOS 项目根目录；出现多个 App 候选时，明确选择 Scheme、Target 和 Bundle ID 对应的目标。
+3. 在“续期”中选择提醒或自动刷新策略及检查频率，点击“存储更改”，返回工作台查看检查结果。
+
+登录启动和界面风格位于“通用”，选择立即生效；局域网控制需单独启用。安装与构建步骤见下文“打包应用”。
 
 ## 目标 iOS 项目约定
 
@@ -72,7 +89,7 @@
 5. 先持久化安装前宿主回执，再用 `xcrun devicectl device install app` 安装；安装成功后立即标记回执并提交 Profile 缓存事务。
 6. iOSSignKit 根据安装命令返回的容器身份，把独立的安装回执写入目标 App 数据容器，读回校验并复核当前安装，最后尝试启动 App。回执同步不依赖目标 App 启动。
 
-当存在同名设备时，iOSSignKit 会拒绝部署，避免仅靠名称安装到错误真机。固定目标设备按稳定设备 ID 匹配；该 ID 当前不可用时不会回退到同名设备、唯一可用设备或其他 iPhone。
+仅按名称匹配且存在多台同名设备时，iOSSignKit 会拒绝选择目标，要求先固定设备 ID。已固定目标按稳定设备 ID 精确匹配，不受其他设备同名影响；该 ID 当前不可用时不会回退到同名设备、唯一可用设备或其他 iPhone。
 
 构建、Profile 解码、签名核验和安装命令均由 iOSSignKit 直接启动并实时汇总输出。内部部署令牌、进程组和只读所有权标记用于取消、超时及异常退出恢复；目标仓库无需感知或转发这些内部标识。
 
@@ -118,6 +135,7 @@ Library/Application Support/<候选目录名>/install-metadata.json
 - 自动刷新只在已确认目标 App 存在且预计到期时进入 5 秒倒计时；连续两次确认 App 未安装后会停止提醒、自动刷新和自动配对。
 - 自动刷新和自动恢复显式使用 `auto`，优先复用仍有效的 Profile；只有已确认到期的手动操作会直接使用 `force`。
 - 部署前会按完整设备 ID 检查 Xcode destination。检查结果不确定时自动刷新会停止，手动刷新会显示诊断后允许继续。
+- 自动刷新遇到设备锁屏、锁态未知或 Xcode 正在准备设备时，会保留等待任务。锁态事件只触发重新探测，不能直接授权安装；事件监听连接期间，锁屏与锁态未知等待以 `5` 分钟轮询兜底，监听中断后恢复常规探测。解锁且预检通过后才继续，具体等待节奏见[项目架构](docs/architecture.md#9-检查提醒与自动续期)。
 - 如果自动部署明确因目标 iPhone 尚未完成 Xcode 设备准备而失败，解锁提示只发送一次，并在重新核对设备、目标配置、安装实例、策略和到期条件后最多恢复重试一次；恢复尝试不会递归重试。
 - 安装状态、过期推断和提醒冷却同时绑定设备 ID 与 Bundle ID；切换设备或目标 App 后不会沿用旧目标证据。
 - “最近成功刷新时间 + 7 天”的兜底仅属于当前安装实例；历史刷新记录不会在 App 已确认卸载或安装实例变化后重新成为有效期证据。
@@ -134,6 +152,16 @@ open Package.swift
 ```
 
 `Package.swift` 用 Xcode 打开后可以直接运行 `IOSSignKit`。
+
+Swift 测试与局域网页面的 JavaScript 测试分开执行。后者使用 Node.js 内置测试运行器，无需安装 npm 依赖：
+
+```bash
+node --test Tests/LANControlWebTests/motion.test.cjs
+```
+
+涉及异步刷新任务或调度生命周期时，可使用 `./scripts/verify-test-concurrency.sh --iterations 20` 检查重点套件；`--full` 扩展到全部 Swift 测试，`--no-parallel` 仅用于串行诊断。JavaScript 测试使用隔离 DOM 适配器，不等同于真实浏览器验收。只读真机测试默认不执行设备查询；需要实际检查时，显式设置 `IOS_SIGN_KIT_RUN_LIVE_DEVICE_READ_ONLY=1` 并筛选 `DeviceMonitorLiveReadOnlyTests`。
+
+常规代码或文档修改的验证范围遵循 [AGENTS.md](AGENTS.md#修改后验证约定)；单元测试、打包产物检查、Mac App 安装运行和 iPhone 真机验收是不同的验证层次。
 
 ### 本地开发工作台
 
@@ -154,7 +182,7 @@ git config user.email '<YOUR_GITHUB_NOREPLY_EMAIL>'
 git remote add private <PRIVATE_MIRROR_URL>
 ```
 
-提交前先运行只读公开源码检查：
+提交前检查改动范围与暂存内容；创建本地提交并确保工作区干净后、推送前，再运行只读公开源码检查：
 
 ```bash
 ./scripts/verify-public-source.sh
@@ -198,7 +226,7 @@ cd ios-sign-kit
 open dist/iOSSignKit.dmg
 ```
 
-`app` 参数仍可显式使用，例如 `./scripts/build-app.sh app`。日常功能验证直接执行默认命令即可复用 SwiftPM 和 App Icon 缓存并跳过 DMG 创建；只有正式 release 验收时才显式生成完整 DMG。
+`app` 参数仍可显式使用，例如 `./scripts/build-app.sh app`。需要打包验证时，默认命令会复用 SwiftPM 和 App Icon 缓存并跳过 DMG 创建；常规功能或文档修改不会因此自动要求打包。需要 DMG 或完整 release 产物验收时才显式生成 DMG。
 
 将已经生成的正式 App 安装到本机“应用程序”目录：
 
@@ -206,7 +234,9 @@ open dist/iOSSignKit.dmg
 ./scripts/install-app.sh
 ```
 
-脚本只处理 `dist/iOSSignKit.app`，不会自动构建、启动应用或请求提权。安装前会核验 Bundle ID、可执行文件和代码签名，并拒绝替换仍在运行的 iOSSignKit。已有安装会先移动到废纸篓；安装中途失败时，脚本会尝试恢复 `dist` 产物和原安装。只检查、不移动文件时可执行 `./scripts/install-app.sh --dry-run`。
+脚本将 `dist/iOSSignKit.app` 移动到 `/Applications/iOSSignKit.app`，不会自动构建、启动应用或请求提权。安装前先等待正在进行的 iOS App 签名安装结束，再正常退出 iOSSignKit。脚本会核验 Bundle ID、可执行文件和代码签名，并拒绝替换仍在运行的 iOSSignKit。已有安装会先移动到废纸篓；安装中途失败时，脚本会尝试恢复 `dist` 产物和原安装。只检查、不移动文件时可执行 `./scripts/install-app.sh --dry-run`。
+
+打包与安装共用 `dist/.build-app.lock`。打包先在暂存目录生成并签名校验产物，再替换正式输出；替换期间失败会尝试恢复原 App/DMG。仅生成 App 时不会更新已存在的 DMG，不能据此把旧 DMG 当成本次产物。
 
 需要测量项目级冷构建时，显式传入 `--clean`。脚本会在取得打包锁后递归删除当前项目的 `.build`，同时清除 SwiftPM 构建产物与 App Icon 缓存，但不会删除 `dist`、`.swiftpm` 或全局 SwiftPM/Xcode 缓存：
 
@@ -252,6 +282,8 @@ SwiftPM 运行时资源中不保存 App Icon 副本；正式应用图标只来�
 
 正式 Bundle ID 固定为 `com.xuzw.iossignkit`。展示名、可执行名、Bundle ID、版本号和最低 macOS 版本统一来自 `config/release-metadata.json`；release 构建不接受 `BUNDLE_IDENTIFIER` 或 `BUNDLE_VERSION` 环境覆盖。元数据缺失、内容非法或发生覆盖尝试时会在 Swift 构建前失败。
 
+准备分发、安装验收或正式测试的构建前，需要在该元数据文件中递增 Build Version；打包脚本不会自动递增。Marketing Version 使用三段式数字，按修复、新功能或不兼容变化递增对应段；普通代码提交不递增 Build Version。界面常驻展示 Marketing Version，Build Version 可在悬停说明、辅助功能文本和诊断中查看。
+
 从旧 Bundle ID 或 `/usr/bin/open` LaunchAgent 升级时，应用只会在旧配置是普通文件、Label 精确匹配且启动入口可核验时迁移到 `SMAppService.mainApp`；无法证明归属的文件会保留并给出手动处理提示。macOS 会把新 Bundle ID 视为新的通知主体，安装运行验收时需要重新确认通知权限。
 
 需要用已有开发证书构建可由 Service Management 识别的本地 App 时，显式传入签名身份：
@@ -287,7 +319,7 @@ RELEASE_DEBUG_INFO_FORMAT=dwarf ./scripts/build-app.sh
 
 ## 分发说明
 
-iOSSignKit 的 GitHub 初版仅发布仓库源码，不提供官方预编译 `.app`、`.dmg`，也不在 GitHub Releases 中附加二进制产物。下述打包步骤仅供使用者从源码进行本地构建与自用验收。
+iOSSignKit 的 GitHub 初版仅发布仓库源码，不提供官方预编译 `.app`、`.dmg`，也不在 GitHub Releases 中附加二进制产物。上述打包步骤仅供使用者从源码进行本地构建与自用验收。
 
 `scripts/build-app.sh` 默认生成 `.app`，显式传入 `dmg` 时才生成 DMG。默认 App 使用 ad-hoc 签名，也可以通过 `IOS_SIGN_KIT_CODE_SIGN_IDENTITY` 使用现有签名身份；DMG 本身仍未签名、未公证，因此默认产物只适合本地测试和自用。如果要把 DMG 或 `.app` 作为 GitHub Release 或其他公开渠道分发，应使用 Developer ID 证书签名，并完成 Apple notarization，否则其他用户首次打开时可能会遇到 Gatekeeper 拦截。
 
@@ -298,7 +330,7 @@ iOSSignKit 的 GitHub 初版仅发布仓库源码，不提供官方预编译 `.a
 - 设置页四个分类是否支持鼠标与左右方向键切换，校验失败时是否跳转并标记对应分类
 - 登录自启是否能立即同步或反馈失败，到期前/到期后检查频率和局域网控制草稿是否能显式存储
 - 工作台、设置/历史覆盖页、诊断入口、部署实时输出和日志浮层之间的导航是否稳定
-- 局域网控制的密码登录、一次性二维码、状态刷新和受控续签是否符合预期
+- 局域网控制的密码登录、一次性二维码、签名策略选择、状态刷新及页面隐藏/恢复是否符合预期
 - 刷新后重新点击菜单栏状态项，面板是否仍稳定
 
 ## 在另一台 Mac 复用
@@ -319,6 +351,12 @@ open dist/iOSSignKit.dmg
 ```
 
 首次运行如果被 Gatekeeper 拦截，可以在“系统设置 > 隐私与安全性”里允许打开，或者右键 `.app` 后选择“打开”。
+
+## 本地数据与诊断
+
+配置和运行数据位于 `~/Library/Application Support/iOSSignKit/`：`config.json` 保存目标与策略，`state.json` 保存运行证据和自动化诊断事件，`logs/` 保存部署日志，`Install Receipts/` 与 `Provisioning Profile Backups/` 用于安装回执和异常恢复。部署临时工作区位于 `~/Library/Caches/iOSSignKit/Deployments/`；它们与仓库内的 `.build/`、`dist/` 是不同用途的目录。
+
+遇到设备、签名或自动等待问题时，可从顶部诊断入口或“设置 > 通用”查看、复制诊断报告，从历史记录打开对应部署日志。清理构建缓存不会重置用户配置；存在未结算部署时，不应手动清理 Profile 事务备份或宿主回执。对外提供诊断前应移除账号、设备标识、本机路径和签名材料等敏感信息，安全问题按 [SECURITY.md](SECURITY.md) 私密报告。
 
 ## 许可证、资产与安全
 
