@@ -232,6 +232,7 @@ struct RefreshStateSettlement {
         state.isDeployRunning = false
         state.deploymentRecoveryBlocked = false
         state.activeDeployProcessGroupID = nil
+        let completedDeploymentToken = state.activeDeploymentToken
         state.activeDeploymentToken = nil
         guard isCurrentTarget else {
             if state.lastResult == .running {
@@ -247,6 +248,9 @@ struct RefreshStateSettlement {
             state.lastAutomaticRecoveryFailureAt = nil
             state.lastSuccessAt = result.finishedAt
             state.activeInstallationSuccessAt = result.finishedAt
+            state.installationMetadataRequiresBinding = false
+            state.targetAppProfileDigest = result.verifiedProfileDigest?.lowercased()
+            state.targetAppInstallationToken = completedDeploymentToken
             state.lastExpiryVerifiedAt =
                 result.verifiedProfileExpirationDate == nil
                     ? nil
@@ -315,6 +319,9 @@ struct RefreshStateSettlement {
             )
         case .notInstalled:
             if update.confirmedAbsent {
+                state.installationMetadataRequiresBinding = true
+                state.targetAppProfileDigest = nil
+                state.targetAppInstallationToken = nil
                 state.isTargetAppExpiryEvidenceVerified = false
                 state.activeInstallationSuccessAt = nil
                 state.lastAutomaticRecoveryFailureAt = nil
@@ -363,6 +370,9 @@ struct RefreshStateSettlement {
             appInfo.appURL
         )
         if !appInfo.builtByDeveloper {
+            state.installationMetadataRequiresBinding = true
+            state.targetAppProfileDigest = nil
+            state.targetAppInstallationToken = nil
             state.activeInstallationSuccessAt = nil
             state.lastAutomaticRecoveryFailureAt = nil
             state.lastDetectedExpiryAt = nil
@@ -384,7 +394,7 @@ struct RefreshStateSettlement {
             )
         }
 
-        let identityChanged =
+        let installationIdentityChanged =
             (previousAppURL != nil && previousAppURL != currentAppURL)
             || (state.targetAppVersion != nil
                 && state.targetAppVersion != appInfo.version)
@@ -394,10 +404,28 @@ struct RefreshStateSettlement {
             appInfo,
             state: state
         )
+        let metadataIsBound = appInfo.installMetadataValidation == .valid
+            && appInfo.installMetadata?.isBound(to: appInfo.appURL) == true
+        let incomingDigest = appInfo.installMetadata?.normalizedProfileDigest
+        let profileChanged = appInfo.installMetadataValidation == .valid
+            && metadataIsCurrent
+            && state.targetAppProfileDigest != nil
+            && incomingDigest != nil
+            && state.targetAppProfileDigest != incomingDigest
+        let incomingToken = appInfo.currentDeviceInstallReceipt?.installation.deploymentToken
+        let installationTokenChanged = incomingToken != nil
+            && state.targetAppInstallationToken != nil
+            && incomingToken != state.targetAppInstallationToken
+        let identityChanged = installationIdentityChanged || profileChanged || installationTokenChanged
+        // Persist the stronger requirement across refreshes and restarts.
+        // Clearing old dates alone would let the same stale legacy file pass
+        // on the next scan, once the new URL had already been stored.
+        state.installationMetadataRequiresBinding =
+            state.installationMetadataRequiresBinding || identityChanged || metadataIsBound
         let hasValidatedMetadata =
             appInfo.installMetadataValidation == .valid
                 && metadataIsCurrent
-                && !identityChanged
+                && (!state.installationMetadataRequiresBinding || metadataIsBound)
         let hasCurrentMetadataExpiry = hasValidatedMetadata
             && appInfo.installMetadata?.expectedExpiryAt != nil
         let evidenceVerified = hasValidatedMetadata
@@ -413,10 +441,18 @@ struct RefreshStateSettlement {
 
         if identityChanged {
             state.activeInstallationSuccessAt = nil
+            state.targetAppProfileDigest = nil
+            state.targetAppInstallationToken = nil
+            state.lastPromptAt = nil
+            state.lastAutomaticAttemptAt = nil
             state.lastAutomaticRecoveryFailureAt = nil
             state.lastDetectedExpiryAt = nil
             state.expirySource = nil
             state.lastExpiryVerifiedAt = nil
+        }
+        if hasValidatedMetadata {
+            if let incomingDigest { state.targetAppProfileDigest = incomingDigest }
+            if let incomingToken { state.targetAppInstallationToken = incomingToken }
         }
         state.targetAppPresence = .installed
         state.targetAppBundleID = appInfo.bundleIdentifier
@@ -438,7 +474,7 @@ struct RefreshStateSettlement {
                 && state.lastDetectedExpiryAt != nil
 
         let failureMessage: String?
-        if identityChanged {
+        if identityChanged && !hasValidatedMetadata {
             failureMessage = "检测到新的 App 安装实例，旧有效期证据已失效。"
         } else if case .invalid(let reason) =
                     appInfo.installMetadataValidation {
@@ -446,6 +482,13 @@ struct RefreshStateSettlement {
         } else if case .unavailable(let reason) =
                     appInfo.installMetadataValidation {
             failureMessage = "无法验证安装元数据：\(reason)"
+        } else if appInfo.installMetadataValidation == .previousInstallation {
+            failureMessage = hasPreservedVerifiedProfileExpiry
+                ? nil
+                : "设备上的有效期记录属于上次安装；当前有效期待确认，可手动续签。"
+        } else if state.installationMetadataRequiresBinding && !metadataIsBound
+                    && !hasPreservedVerifiedProfileExpiry {
+            failureMessage = "现有设备元数据未绑定当前安装；有效期待确认，可手动续签。"
         } else if appInfo.installMetadata?.expectedExpiryAt == nil {
             failureMessage = hasPreservedVerifiedProfileExpiry
                 ? nil
@@ -467,8 +510,25 @@ struct RefreshStateSettlement {
         _ appInfo: InstalledAppInfo,
         state: AppState
     ) -> Bool {
-        guard let metadata = appInfo.installMetadata else {
+        guard appInfo.installMetadataValidation == .valid,
+              let metadata = appInfo.installMetadata else {
             return false
+        }
+        if appInfo.currentDeviceInstallReceipt != nil {
+            // Installed-at comes from the producing Mac. The verified container
+            // binding, not this Mac's deployment clock, establishes freshness.
+            return true
+        }
+        if state.installationMetadataRequiresBinding,
+           !metadata.isBound(to: appInfo.appURL) {
+            return false
+        }
+        if metadata.isBound(to: appInfo.appURL),
+           let previousIdentity = state.targetAppURL.flatMap(InstalledAppIdentity.normalizedAppURL),
+           previousIdentity != InstalledAppIdentity.normalizedAppURL(appInfo.appURL) {
+            // This evidence belongs to the observed external installation;
+            // the previous Mac-local deployment time is not its time boundary.
+            return true
         }
         return state.activeInstallationSuccessAt.map {
             metadata.recordedAt >= $0.addingTimeInterval(-5)
@@ -484,7 +544,7 @@ struct RefreshStateSettlement {
     ) -> Bool {
         let metadataMayReflectPreviousInstall: Bool
         switch appInfo.installMetadataValidation {
-        case .notFound:
+        case .notFound, .previousInstallation:
             metadataMayReflectPreviousInstall = true
         case .valid:
             metadataMayReflectPreviousInstall =
@@ -493,6 +553,9 @@ struct RefreshStateSettlement {
             metadataMayReflectPreviousInstall = false
         }
         guard metadataMayReflectPreviousInstall,
+              state.expirySource == .verifiedDeploymentProfile
+                || state.expirySource == .deployTimeEstimate
+                || state.expirySource == .installedAppDetectedDeployTimeEstimate,
               appInfo.builtByDeveloper,
               state.isTargetAppExpiryEvidenceVerified,
               let lastSuccessAt = state.activeInstallationSuccessAt,
@@ -556,6 +619,9 @@ struct RefreshStateSettlement {
         state.targetAppVersion = nil
         state.targetAppBuildVersion = nil
         state.targetAppURL = nil
+        state.installationMetadataRequiresBinding = false
+        state.targetAppProfileDigest = nil
+        state.targetAppInstallationToken = nil
         state.isTargetAppExpiryEvidenceVerified = false
     }
 

@@ -55,6 +55,7 @@ struct DeployResult: Codable, Equatable, Sendable {
     /// Exact expiry read from the provisioning profile embedded in the App
     /// artifact that was installed by this deployment transaction.
     var verifiedProfileExpirationDate: Date? = nil
+    var verifiedProfileDigest: String? = nil
     var processGroupTerminationWasConfirmed: Bool
     /// True only when any provisioning-profile cache transaction was either
     /// durably committed after installation or fully restored after failure.
@@ -74,7 +75,8 @@ struct DeployResult: Codable, Equatable, Sendable {
         logWarning: String? = nil,
         verifiedProfileExpirationDate: Date? = nil,
         processGroupTerminationWasConfirmed: Bool = true,
-        profileCacheRecoveryWasConfirmed: Bool = true
+        profileCacheRecoveryWasConfirmed: Bool = true,
+        verifiedProfileDigest: String? = nil
     ) {
         self.startedAt = startedAt
         self.finishedAt = finishedAt
@@ -84,6 +86,7 @@ struct DeployResult: Codable, Equatable, Sendable {
         self.logPath = logPath
         self.logWarning = logWarning
         self.verifiedProfileExpirationDate = verifiedProfileExpirationDate
+        self.verifiedProfileDigest = verifiedProfileDigest
         self.processGroupTerminationWasConfirmed =
             processGroupTerminationWasConfirmed
         self.profileCacheRecoveryWasConfirmed =
@@ -100,7 +103,8 @@ struct DeployResult: Codable, Equatable, Sendable {
         logWarning: String? = nil,
         verifiedProfileExpirationDate: Date? = nil,
         processGroupTerminationWasConfirmed: Bool = true,
-        profileCacheRecoveryWasConfirmed: Bool = true
+        profileCacheRecoveryWasConfirmed: Bool = true,
+        verifiedProfileDigest: String? = nil
     ) {
         self.init(
             startedAt: startedAt,
@@ -114,7 +118,8 @@ struct DeployResult: Codable, Equatable, Sendable {
             processGroupTerminationWasConfirmed:
                 processGroupTerminationWasConfirmed,
             profileCacheRecoveryWasConfirmed:
-                profileCacheRecoveryWasConfirmed
+                profileCacheRecoveryWasConfirmed,
+            verifiedProfileDigest: verifiedProfileDigest
         )
     }
 
@@ -127,6 +132,7 @@ struct DeployResult: Codable, Equatable, Sendable {
         case logPath
         case logWarning
         case verifiedProfileExpirationDate
+        case verifiedProfileDigest
         case processGroupTerminationWasConfirmed
         case profileCacheRecoveryWasConfirmed
     }
@@ -150,6 +156,7 @@ struct DeployResult: Codable, Equatable, Sendable {
             Date.self,
             forKey: .verifiedProfileExpirationDate
         )
+        verifiedProfileDigest = try container.decodeIfPresent(String.self, forKey: .verifiedProfileDigest)
         processGroupTerminationWasConfirmed = try container.decodeIfPresent(
             Bool.self,
             forKey: .processGroupTerminationWasConfirmed

@@ -76,6 +76,9 @@ struct AppState: Codable, Equatable {
     var targetAppVersion: String?
     var targetAppBuildVersion: String?
     var targetAppURL: String?
+    var targetAppProfileDigest: String?
+    var targetAppInstallationToken: String?
+    var installationMetadataRequiresBinding: Bool
     var isTargetAppExpiryEvidenceVerified: Bool
     var isDeployRunning: Bool
     var activeDeployProcessGroupID: Int32?
@@ -144,7 +147,10 @@ struct AppState: Codable, Equatable {
         activeDeployProcessGroupID: Int32? = nil,
         activeDeploymentToken: String? = nil,
         deploymentRecoveryBlocked: Bool = false,
-        commandRecoveryBlocked: Bool = false
+        commandRecoveryBlocked: Bool = false,
+        installationMetadataRequiresBinding: Bool = false,
+        targetAppProfileDigest: String? = nil,
+        targetAppInstallationToken: String? = nil
     ) {
         self.lastSuccessAt = lastSuccessAt
         self.activeInstallationSuccessAt = activeInstallationSuccessAt
@@ -175,6 +181,9 @@ struct AppState: Codable, Equatable {
         self.targetAppVersion = targetAppVersion
         self.targetAppBuildVersion = targetAppBuildVersion
         self.targetAppURL = targetAppURL
+        self.targetAppProfileDigest = targetAppProfileDigest
+        self.targetAppInstallationToken = targetAppInstallationToken
+        self.installationMetadataRequiresBinding = installationMetadataRequiresBinding
         self.isTargetAppExpiryEvidenceVerified = isTargetAppExpiryEvidenceVerified
         self.isDeployRunning = isDeployRunning
         self.activeDeployProcessGroupID = activeDeployProcessGroupID
@@ -235,6 +244,9 @@ struct AppState: Codable, Equatable {
         case targetAppVersion
         case targetAppBuildVersion
         case targetAppURL
+        case targetAppProfileDigest
+        case targetAppInstallationToken
+        case installationMetadataRequiresBinding
         case isTargetAppExpiryEvidenceVerified
         case isDeployRunning
         case activeDeployProcessGroupID
@@ -286,6 +298,11 @@ struct AppState: Codable, Equatable {
             forKey: .targetAppBuildVersion
         )
         targetAppURL = try container.decodeIfPresent(String.self, forKey: .targetAppURL)
+        targetAppProfileDigest = try container.decodeIfPresent(String.self, forKey: .targetAppProfileDigest)
+        targetAppInstallationToken = try container.decodeIfPresent(String.self, forKey: .targetAppInstallationToken)
+        installationMetadataRequiresBinding = try container.decodeIfPresent(
+            Bool.self, forKey: .installationMetadataRequiresBinding
+        ) ?? false
         isTargetAppExpiryEvidenceVerified = try container.decodeIfPresent(
             Bool.self,
             forKey: .isTargetAppExpiryEvidenceVerified

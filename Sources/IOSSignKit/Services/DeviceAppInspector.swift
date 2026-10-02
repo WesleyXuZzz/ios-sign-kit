@@ -94,6 +94,64 @@ struct DeviceAppInspector {
         commandTimeoutSeconds: TimeInterval,
         outerTimeoutSeconds: TimeInterval
     ) async throws -> InstalledAppInfo? {
+        guard let app = try await fetchAppRecord(
+            device: device, bundleID: bundleID,
+            commandTimeoutSeconds: commandTimeoutSeconds,
+            outerTimeoutSeconds: outerTimeoutSeconds
+        ) else { return nil }
+        let receiptResult = try await fetchDeviceReceipt(
+            device: device, bundleID: bundleID, app: app,
+            commandTimeoutSeconds: commandTimeoutSeconds,
+            outerTimeoutSeconds: outerTimeoutSeconds
+        )
+        if let receiptResult {
+            // The two observations must straddle the receipt read. A container
+            // change during transfer invalidates this whole observation.
+            if receiptResult.receipt != nil {
+                guard let confirmed = try await fetchAppRecord(
+                    device: device, bundleID: bundleID,
+                    commandTimeoutSeconds: commandTimeoutSeconds,
+                    outerTimeoutSeconds: outerTimeoutSeconds
+                ), confirmed == app else {
+                    throw DeviceAppInspectorError.invalidResponse("读取设备回执期间安装发生变化，请重新检查。")
+                }
+            }
+            return InstalledAppInfo(
+                bundleIdentifier: app.bundleIdentifier, name: app.name,
+                version: app.version, bundleVersion: app.bundleVersion,
+                appURL: InstalledAppIdentity.normalizedAppURL(app.url)!,
+                builtByDeveloper: app.builtByDeveloper,
+                installMetadata: receiptResult.receipt?.metadata,
+                installMetadataValidation: receiptResult.validation,
+                deviceInstallReceipt: receiptResult.receipt
+            )
+        }
+        let metadataResult = try await fetchInstallMetadata(
+            device: device,
+            bundleID: bundleID,
+            app: app,
+            commandTimeoutSeconds: commandTimeoutSeconds,
+            outerTimeoutSeconds: outerTimeoutSeconds
+        )
+
+        return InstalledAppInfo(
+            bundleIdentifier: app.bundleIdentifier,
+            name: app.name,
+            version: app.version,
+            bundleVersion: app.bundleVersion,
+            appURL: InstalledAppIdentity.normalizedAppURL(app.url)!,
+            builtByDeveloper: app.builtByDeveloper,
+            installMetadata: metadataResult.metadata,
+            installMetadataValidation: metadataResult.validation
+        )
+    }
+
+    private func fetchAppRecord(
+        device: DeviceInfo,
+        bundleID: String,
+        commandTimeoutSeconds: TimeInterval,
+        outerTimeoutSeconds: TimeInterval
+    ) async throws -> DeviceAppRecord? {
         let outputURL = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("devicectl-apps-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: outputURL) }
@@ -122,45 +180,50 @@ struct DeviceAppInspector {
             at: outputURL,
             maximumBytes: BoundedFileReader.structuredOutputMaximumBytes
         )
-        let decoded = try decoder.decode(DeviceAppsResponse.self, from: data)
-        let matchingApps = decoded.result.apps.filter {
-            $0.bundleIdentifier == bundleID
-        }
-        guard matchingApps.count <= 1 else {
-            throw DeviceAppInspectorError.invalidResponse(
-                "设备返回了多个相同 Bundle ID 的安装记录，无法确认当前实例。"
-            )
-        }
-        guard let app = matchingApps.first else {
-            return nil
-        }
-        guard [app.bundleIdentifier, app.name, app.version, app.bundleVersion]
-            .allSatisfy(DeviceIdentityValidator.isSafe),
-              let normalizedAppURL = InstalledAppIdentity.normalizedAppURL(app.url),
-              normalizedAppURL.utf8.count <= 1_024 else {
-            throw DeviceAppInspectorError.invalidResponse(
-                "设备返回的 App 身份字段无效或过长。"
-            )
-        }
+        return try DeviceAppsResponse.app(from: data, bundleID: bundleID)
+    }
 
-        let metadataResult = try await fetchInstallMetadata(
-            device: device,
-            bundleID: bundleID,
-            app: app,
-            commandTimeoutSeconds: commandTimeoutSeconds,
-            outerTimeoutSeconds: outerTimeoutSeconds
-        )
-
-        return InstalledAppInfo(
-            bundleIdentifier: app.bundleIdentifier,
-            name: app.name,
-            version: app.version,
-            bundleVersion: app.bundleVersion,
-            appURL: normalizedAppURL,
-            builtByDeveloper: app.builtByDeveloper,
-            installMetadata: metadataResult.metadata,
-            installMetadataValidation: metadataResult.validation
-        )
+    private func fetchDeviceReceipt(
+        device: DeviceInfo,
+        bundleID: String,
+        app: DeviceAppRecord,
+        commandTimeoutSeconds: TimeInterval,
+        outerTimeoutSeconds: TimeInterval
+    ) async throws -> (receipt: DeviceInstallReceipt?, validation: InstallMetadataValidation)? {
+        let destination = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("device-receipt-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let result: CommandResult
+        do {
+            result = try await runCommand("/usr/bin/xcrun", [
+                "devicectl", "device", "copy", "from",
+                "--device", device.id,
+                "--domain-type", "appDataContainer",
+                "--domain-identifier", bundleID,
+                "--source", DeviceInstallReceipt.containerPath,
+                "--destination", destination.path,
+                "--timeout", "\(Int(ceil(commandTimeoutSeconds)))"
+            ], outerTimeoutSeconds)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            return (nil, .unavailable(DiagnosticText.bounded(error.localizedDescription)))
+        }
+        guard result.completedSuccessfullyAndFullyTerminated else {
+            let diagnostic = DiagnosticText.bounded(result.standardError.isEmpty ? result.standardOutput : result.standardError)
+            // Only an explicit absence allows falling back to optional legacy
+            // App metadata. An unreadable/corrupt receipt cannot be bypassed.
+            if result.processGroupTerminationWasConfirmed,
+               Self.isExplicitMissingMetadataFile(diagnostic) { return nil }
+            return (nil, .unavailable(diagnostic.isEmpty ? "无法读取设备安装回执。" : diagnostic))
+        }
+        do {
+            let data = try BoundedFileReader().data(at: destination, maximumBytes: DeviceInstallReceipt.maximumBytes)
+            let receipt = try DeviceInstallReceipt.decode(data)
+            return (receipt, receipt.validation(deviceID: device.id, app: app))
+        } catch {
+            return (nil, .invalid("设备安装回执无效：\(DiagnosticText.bounded(error.localizedDescription))"))
+        }
     }
 
     private func fetchInstallMetadata(
@@ -172,6 +235,7 @@ struct DeviceAppInspector {
     ) async throws -> InstallMetadataFetchResult {
         var invalidReason: String?
         var unavailableReason: String?
+        var previousInstallationMetadata: AppInstallMetadataSnapshot?
         var sawExplicitlyMissingFile = false
 
         for sourcePath in Self.installMetadataSourcePaths(appName: app.name, bundleID: bundleID, appURL: app.url) {
@@ -229,17 +293,21 @@ struct DeviceAppInspector {
                     maximumBytes: BoundedFileReader.metadataMaximumBytes
                 )
                 let metadata = try decoder.decode(AppInstallMetadataSnapshot.self, from: data)
-                if let validationFailure = InstallMetadataValidator.validationFailure(
+                switch InstallMetadataValidator.validate(
                     metadata,
                     requestedBundleID: bundleID,
                     installedBundleID: app.bundleIdentifier,
                     installedVersion: app.version,
-                    installedBuildVersion: app.bundleVersion
+                    installedBuildVersion: app.bundleVersion,
+                    installedAppURL: app.url
                 ) {
-                    invalidReason = validationFailure
-                    continue
+                case .valid:
+                    return InstallMetadataFetchResult(metadata: metadata, validation: .valid)
+                case .previousInstallation:
+                    previousInstallationMetadata = metadata
+                case .invalid(let reason):
+                    invalidReason = reason
                 }
-                return InstallMetadataFetchResult(metadata: metadata, validation: .valid)
             } catch {
                 invalidReason = "无法解码安装元数据：\(error.localizedDescription)"
                 continue
@@ -248,6 +316,12 @@ struct DeviceAppInspector {
 
         if let invalidReason {
             return InstallMetadataFetchResult(metadata: nil, validation: .invalid(invalidReason))
+        }
+        if let previousInstallationMetadata {
+            return InstallMetadataFetchResult(
+                metadata: previousInstallationMetadata,
+                validation: .previousInstallation
+            )
         }
         if let unavailableReason {
             return InstallMetadataFetchResult(
@@ -312,52 +386,85 @@ struct DeviceAppInspector {
 }
 
 struct InstallMetadataValidator {
+    enum Result: Equatable {
+        case valid
+        case previousInstallation
+        case invalid(String)
+    }
+
     static let supportedSchemaVersion = 1
     static let maximumClockSkew: TimeInterval = 5 * 60
     static let maximumPersonalProfileLifetime: TimeInterval = 8 * 24 * 60 * 60
     static let maximumProfileSourceBytes = 256
 
-    static func validationFailure(
+    static func validate(
         _ metadata: AppInstallMetadataSnapshot,
         requestedBundleID: String,
         installedBundleID: String,
         installedVersion: String,
         installedBuildVersion: String,
-        now: Date = Date()
-    ) -> String? {
+        now: Date = Date(),
+        installedAppURL: String? = nil
+    ) -> Result {
         guard metadata.schemaVersion == supportedSchemaVersion else {
-            return "不支持 schemaVersion \(metadata.schemaVersion)。"
+            return .invalid("不支持 schemaVersion \(metadata.schemaVersion)。")
         }
         guard metadata.bundleIdentifier == requestedBundleID,
               metadata.bundleIdentifier == installedBundleID else {
-            return "Bundle ID 与当前安装不一致。"
+            return .invalid("Bundle ID 与当前安装不一致。")
         }
-        guard metadata.shortVersion == installedVersion,
-              metadata.buildVersion == installedBuildVersion else {
-            return "版本或 Build 与当前安装不一致。"
+        guard [metadata.shortVersion, metadata.buildVersion]
+            .allSatisfy(DeviceIdentityValidator.isSafe) else {
+            return .invalid("版本或 Build 包含无效字段。")
+        }
+        if metadata.profileDigest != nil,
+           metadata.normalizedProfileDigest == nil {
+            return .invalid("Profile 摘要必须是 64 位十六进制 SHA-256。")
+        }
+        var belongsToPreviousInstallation = false
+        if let reportedURL = metadata.installationAppURL {
+            guard reportedURL.utf8.count <= 1_024,
+                  let reportedIdentity = InstalledAppIdentity.normalizedAppURL(reportedURL),
+                  let installedAppURL,
+                  let observedIdentity = InstalledAppIdentity.normalizedAppURL(installedAppURL) else {
+                return .invalid("安装元数据或设备当前的 App 安装路径无效。")
+            }
+            belongsToPreviousInstallation = reportedIdentity != observedIdentity
         }
         guard metadata.recordedAt <= now.addingTimeInterval(maximumClockSkew) else {
-            return "recordedAt 晚于当前时间。"
+            return .invalid("recordedAt 晚于当前时间。")
         }
         let profileSource = metadata.profileSource.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard profileSource != DeviceInstallReceipt.source else {
+            return .invalid("设备回执来源只能由独立的安装回执提供。")
+        }
         guard !profileSource.isEmpty else {
-            return "profileSource 为空。"
+            return .invalid("profileSource 为空。")
         }
         guard profileSource.lengthOfBytes(using: .utf8) <= maximumProfileSourceBytes,
               profileSource.unicodeScalars.allSatisfy({
                   !CharacterSet.controlCharacters.contains($0)
               }) else {
-            return "profileSource 包含非法字符或长度超过 \(maximumProfileSourceBytes) 字节。"
+            return .invalid("profileSource 包含非法字符或长度超过 \(maximumProfileSourceBytes) 字节。")
         }
         if let expectedExpiryAt = metadata.expectedExpiryAt {
             guard expectedExpiryAt >= metadata.recordedAt.addingTimeInterval(-maximumClockSkew) else {
-                return "expectedExpiryAt 早于 recordedAt。"
+                return .invalid("expectedExpiryAt 早于 recordedAt。")
             }
             guard expectedExpiryAt <= metadata.recordedAt.addingTimeInterval(maximumPersonalProfileLifetime) else {
-                return "expectedExpiryAt 超出个人签名有效期范围。"
+                return .invalid("expectedExpiryAt 超出个人签名有效期范围。")
             }
         }
-        return nil
+        // Classify only well-formed evidence for this Bundle as stale. Its
+        // version may legitimately differ after a successful local upgrade.
+        if belongsToPreviousInstallation {
+            return .previousInstallation
+        }
+        guard metadata.shortVersion == installedVersion,
+              metadata.buildVersion == installedBuildVersion else {
+            return .invalid("版本或 Build 与当前安装不一致。")
+        }
+        return .valid
     }
 }
 
@@ -378,21 +485,4 @@ enum DeviceAppInspectorError: Error, LocalizedError {
             return message.isEmpty ? "devicectl 未能读取已安装 App。" : message
         }
     }
-}
-
-private struct DeviceAppsResponse: Decodable {
-    let result: DeviceAppsResult
-}
-
-private struct DeviceAppsResult: Decodable {
-    let apps: [DeviceAppRecord]
-}
-
-private struct DeviceAppRecord: Decodable {
-    let bundleIdentifier: String
-    let bundleVersion: String
-    let name: String
-    let url: String
-    let version: String
-    let builtByDeveloper: Bool
 }

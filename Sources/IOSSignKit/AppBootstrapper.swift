@@ -277,6 +277,8 @@ final class AppBootstrapper {
             || recovered.targetAppVersion != nil
             || recovered.targetAppBuildVersion != nil
             || recovered.targetAppURL != nil
+            || recovered.targetAppProfileDigest != nil
+            || recovered.installationMetadataRequiresBinding
             || recovered.isTargetAppExpiryEvidenceVerified
         let targetIdentityIsIncomplete = recordedBundleID == nil || recordedDeviceID == nil
         if targetIdentityChanged
@@ -300,6 +302,9 @@ final class AppBootstrapper {
             recovered.targetAppVersion = nil
             recovered.targetAppBuildVersion = nil
             recovered.targetAppURL = nil
+            recovered.targetAppProfileDigest = nil
+            recovered.targetAppInstallationToken = nil
+            recovered.installationMetadataRequiresBinding = false
             recovered.isTargetAppExpiryEvidenceVerified = false
             recovered.lastPromptAt = nil
             didChange = true
@@ -446,6 +451,9 @@ final class AppBootstrapper {
         state.targetAppVersion = receipt.shortVersion
         state.targetAppBuildVersion = receipt.buildVersion
         state.targetAppURL = nil
+        state.targetAppProfileDigest = receipt.profileDigest.lowercased()
+        state.targetAppInstallationToken = receipt.deploymentToken
+        state.installationMetadataRequiresBinding = false
         state.isTargetAppExpiryEvidenceVerified = true
         state.lastErrorSummary = workspaceCleanupWarning
     }

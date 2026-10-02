@@ -16,15 +16,21 @@ struct StandardIOSDeploymentRequest: Sendable {
 struct DeploymentExecutionResult: Sendable {
     let commandResult: CommandResult
     let verifiedProfileExpirationDate: Date?
+    let verifiedProfileDigest: String?
+    let deviceReceiptWarning: String?
     let profileCacheRecoveryWasConfirmed: Bool
 
     init(
         commandResult: CommandResult,
         verifiedProfileExpirationDate: Date?,
-        profileCacheRecoveryWasConfirmed: Bool = true
+        profileCacheRecoveryWasConfirmed: Bool = true,
+        verifiedProfileDigest: String? = nil,
+        deviceReceiptWarning: String? = nil
     ) {
         self.commandResult = commandResult
         self.verifiedProfileExpirationDate = verifiedProfileExpirationDate
+        self.verifiedProfileDigest = verifiedProfileDigest
+        self.deviceReceiptWarning = deviceReceiptWarning
         self.profileCacheRecoveryWasConfirmed =
             profileCacheRecoveryWasConfirmed
     }
@@ -1016,12 +1022,13 @@ private final class StandardIOSDeploymentExecution:
                 status: 1
             )
         }
+        let preparedAt = Date()
         do {
             try recordPreparedReceipt(
                 request,
                 verifiedApplication,
                 product.developmentTeam,
-                Date()
+                preparedAt
             )
         } catch {
             transcript.appendDiagnostic(
@@ -1042,6 +1049,7 @@ private final class StandardIOSDeploymentExecution:
             )
         }
 
+        let installResultURL = workspaceURL.appendingPathComponent("devicectl-install.json")
         let installResult: CommandResult
         do {
             onOutput?("\n[安装] 正在安装到 \(request.deviceName)…\n", false)
@@ -1050,6 +1058,7 @@ private final class StandardIOSDeploymentExecution:
                 arguments: [
                     "devicectl", "device", "install", "app",
                     "--device", request.deviceID,
+                    "--json-output", installResultURL.path,
                     verifiedApplication.applicationURL.path
                 ],
                 timeoutSeconds: StandardIOSDeploymentStageTimeout.install
@@ -1072,8 +1081,9 @@ private final class StandardIOSDeploymentExecution:
                 status: installResult.terminationStatus
             )
         }
+        let installedAt = Date()
         do {
-            try markInstalledReceipt(request.deploymentToken, Date())
+            try markInstalledReceipt(request.deploymentToken, installedAt)
         } catch {
             transcript.appendDiagnostic(
                 "App 已安装，但宿主安装回执未能标记为已安装；"
@@ -1102,13 +1112,59 @@ private final class StandardIOSDeploymentExecution:
                 )
             }
         }
-        guard !isCancellationRequested else {
+        var deviceReceiptWarning: String?
+        if !isCancellationRequested {
+            do {
+                onOutput?("\n[同步] 正在保存跨 Mac 安装回执…\n", false)
+                let installation = HostInstallReceipt(
+                    schemaVersion: HostInstallReceipt.schemaVersion,
+                    deploymentToken: request.deploymentToken,
+                    bundleIdentifier: request.bundleIdentifier,
+                    deviceIdentifier: request.deviceID,
+                    teamIdentifier: product.developmentTeam,
+                    shortVersion: verifiedApplication.shortVersion,
+                    buildVersion: verifiedApplication.buildVersion,
+                    profileUUID: verifiedApplication.profileUUID,
+                    profileDigest: verifiedApplication.profileDigest,
+                    profileExpirationDate: verifiedApplication.profileExpirationDate,
+                    preparedAt: preparedAt,
+                    status: .installed,
+                    installedAt: installedAt
+                )
+                try DeviceInstallReceiptPublisher().publish(
+                    installation: installation,
+                    installResultURL: installResultURL,
+                    workspaceURL: workspaceURL
+                ) { arguments in
+                    guard !isCancellationRequested else { throw CancellationError() }
+                    let result = try runStage(
+                        launchPath: "/usr/bin/xcrun", arguments: arguments, timeoutSeconds: 31
+                    )
+                    transcript.append(stage: "device install receipt", result: result)
+                    guard result.completedSuccessfullyAndFullyTerminated else {
+                        throw DeviceInstallReceiptError.invalid(
+                            DiagnosticText.bounded(result.standardError.isEmpty ? result.standardOutput : result.standardError)
+                        )
+                    }
+                }
+                transcript.appendOutput("\ndevice_install_receipt=verified\n")
+            } catch {
+                let warning = "App 已安装，但跨 Mac 安装回执未完成核验；另一台 Mac 的有效期可能暂时未知。"
+                deviceReceiptWarning = warning
+                transcript.appendDiagnostic(warning + " " + DiagnosticText.bounded(error.localizedDescription))
+            }
+        } else {
+            deviceReceiptWarning = "App 已安装，后续回执同步已取消；另一台 Mac 的有效期可能暂时未知。"
+        }
+        guard !isCancellationRequested, transcript.processGroupTerminationWasConfirmed else {
             return DeploymentExecutionResult(
                 commandResult: transcript.result(terminationStatus: 0),
                 verifiedProfileExpirationDate:
                     verifiedApplication.profileExpirationDate,
                 profileCacheRecoveryWasConfirmed:
-                    profileCacheRecoveryWasConfirmed
+                    profileCacheRecoveryWasConfirmed,
+                verifiedProfileDigest: verifiedApplication.profileDigest,
+                deviceReceiptWarning: deviceReceiptWarning
             )
         }
 
@@ -1140,7 +1196,9 @@ private final class StandardIOSDeploymentExecution:
             verifiedProfileExpirationDate:
                 verifiedApplication.profileExpirationDate,
             profileCacheRecoveryWasConfirmed:
-                profileCacheRecoveryWasConfirmed
+                profileCacheRecoveryWasConfirmed,
+            verifiedProfileDigest: verifiedApplication.profileDigest,
+            deviceReceiptWarning: deviceReceiptWarning
         )
     }
 
@@ -1309,7 +1367,9 @@ private final class StandardIOSDeploymentExecution:
             verifiedProfileExpirationDate:
                 result.verifiedProfileExpirationDate,
             profileCacheRecoveryWasConfirmed:
-                result.profileCacheRecoveryWasConfirmed
+                result.profileCacheRecoveryWasConfirmed,
+            verifiedProfileDigest: result.verifiedProfileDigest,
+            deviceReceiptWarning: result.deviceReceiptWarning
         )
     }
 

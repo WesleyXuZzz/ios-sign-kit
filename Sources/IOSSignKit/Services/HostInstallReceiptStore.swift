@@ -147,7 +147,7 @@ struct HostInstallReceiptStore: Sendable {
             status: .prepared,
             installedAt: nil
         )
-        try validate(receipt)
+        try Self.validateReceipt(receipt)
         let rootURL = try preparedRootURL()
         let receiptURL = try exactReceiptURL(
             deploymentToken: deploymentToken,
@@ -200,7 +200,7 @@ struct HostInstallReceiptStore: Sendable {
         }
         receipt.status = .installed
         receipt.installedAt = Self.canonicalDate(installedAt)
-        try validate(receipt)
+        try Self.validateReceipt(receipt)
         try write(receipt, to: receiptURL, permitsReplacement: true)
         try enforceRetention(
             in: rootURL,
@@ -400,7 +400,7 @@ struct HostInstallReceiptStore: Sendable {
                 HostInstallReceipt.self,
                 from: envelope.payload
             )
-            try validate(receipt)
+            try Self.validateReceipt(receipt)
             return receipt
         } catch let error as HostInstallReceiptStoreError {
             throw error
@@ -411,7 +411,7 @@ struct HostInstallReceiptStore: Sendable {
         }
     }
 
-    private func validate(_ receipt: HostInstallReceipt) throws {
+    static func validateReceipt(_ receipt: HostInstallReceipt) throws {
         guard receipt.schemaVersion == HostInstallReceipt.schemaVersion,
               DeploymentToken(rawValue: receipt.deploymentToken) != nil else {
             throw HostInstallReceiptStoreError.invalidReceipt(

@@ -180,7 +180,7 @@ struct StatusDetailsViewModelTests {
             detectedAt: now,
             isFallbackValue: false
         )
-        #expect(viewModel.expiryDetailSummary == "来源：已安装 App 元信息 · embedded.mobileprovision")
+        #expect(viewModel.expiryDetailSummary == "来源：设备报告 · 未绑定安装实例 · embedded.mobileprovision")
 
         viewModel.expiryInfo?.estimatedExpiryAt = now.addingTimeInterval(-60)
         #expect(viewModel.expiryStatusTone == .critical)

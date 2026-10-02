@@ -128,17 +128,18 @@ open Package.swift
 - `RefreshPolicy` / `RefreshSessionCaches`：决定后台心跳、App 补查和完整交互检查，并提供按目标代次绑定的 Xcode/App 会话缓存；缓存只用于候选筛选，不能直接授权提醒、配对、倒计时或部署。
 - `DeviceMatcher`：返回类型化匹配结果；固定设备 ID 缺失时禁止回退，同名设备视为歧义。
 - `DevicePairingService`：通过 `xcrun devicectl manage pair` 尝试恢复符合条件的无线设备，并区分需要确认、网络不可用和其他失败。
-- `DeviceAppInspector`：通过 `xcrun devicectl` 查询目标 App 是否安装在设备上，并尝试读取安装元信息。
+- `DeviceAppInspector`：通过 `xcrun devicectl` 查询当前安装，优先读取独立设备回执并在读取前后复核容器；回执明确不存在时才读取可选的目标 App 元信息。
 - `XcodeProjectLocator`：递归发现项目目录中的 `.xcodeproj` 与 `.xcworkspace`，同时排除隐藏目录、依赖目录、构建产物目录和 `.xcodeproj` 内部生成的重复 Workspace。
 - `XcodeProjectResolver`：通过 `xcodebuild -list -json` 与 `-showBuildSettings -json` 识别真实 Scheme、`iphoneos` App Target 与 Bundle ID；混合平台 Workspace 中只跳过可确认不包含 iOS App 的 Scheme。
 - `XcodeDestinationReadinessInspector`：部署前通过 `xcodebuild -showdestinations` 按完整设备 ID 检查目标是否可用，并区分需解锁、不可用和无法确认。
 - `AutomaticRefreshWaitCoordinator`：在到期自动刷新遇到锁屏、锁态未知或 Xcode destination 准备中时维持单一等待任务；统一承接周期探测、锁态事件、系统唤醒和用户“立即检查”，并在目标、安装实例或策略变化后丢弃旧结果。
 - `DeviceLockEventObserver`：只在自动刷新等待期间通过 `devicectl device notification observe` 监听目标设备的 SpringBoard 锁态通知，事件只触发锁态探测，不直接授权部署。
 - `DeployService`：把已授权目标适配为内置标准部署请求，返回可取消的 `RunningDeploy`，并将有界 stdout/stderr、精确 Profile 有效期和恢复确认状态写入日志与部署结果。
-- `StandardIOSDeploymentExecutor`：直接编排 `xcodebuild -showBuildSettings`、Profile 缓存事务、真机 Build、已签名产物核验、宿主回执、`devicectl install` 与可选 Launch；所有外部阶段都有有限超时，构建只写入按精确部署令牌隔离的私有 DerivedData。
+- `StandardIOSDeploymentExecutor`：直接编排 `xcodebuild -showBuildSettings`、Profile 缓存事务、真机 Build、已签名产物核验、宿主回执、`devicectl install`、设备回执同步与可选 Launch；所有外部阶段都有有限超时，构建只写入按精确部署令牌隔离的私有 DerivedData。
 - `ProvisioningProfileCacheManager` / `ProvisioningProfileCacheTransaction`：在 Xcode UserData 与 MobileDevice 两个标准缓存目录中按 Team + Bundle ID 精确处理 Profile；`auto` 只隔离过期匹配项，`force` 隔离全部匹配项，并以带摘要的持久化事务支持 commit、rollback 与崩溃恢复。
 - `SignedIOSAppInspector`：安装前核验受控 DerivedData 内唯一 `.app` 的 Bundle ID、Info、可执行文件、代码签名、Team、设备授权、Profile 摘要与精确到期时间，拒绝路径逃逸、符号链接替换和不完整命令结果。
 - `HostInstallReceiptStore`：按精确部署令牌保存 `prepared` / `installed` 宿主回执，记录设备、Bundle、Team、版本和已核验 Profile，使用带 SHA-256 的有界原子文件支撑安装后崩溃恢复。
+- `DeviceInstallReceipt` / `DeviceInstallReceiptPublisher`：由宿主根据已核验产物和安装命令返回的容器生成独立设备回执，写入 App 数据容器并读回核验；目标 App 无需源码、SDK、专用脚本或额外 Build Phase。读写均使用既有命令所有权与取消链路。
 - `DeployFailureAnalyzer`：统一分析实时结果与历史日志，识别结构化失败标记及可安全绑定目标设备的旧版 Xcode destination 错误。
 - `ReminderPolicy`：根据设备在线状态、预计过期时间、冷却时间、部署状态与安装状态判断是否需要提醒或进入自动刷新。
 - `ExpiryInspector`：负责推断预计过期时间，优先使用安装元信息，其次使用已存储过期时间，最后退化为基于上次成功安装的估算值。
@@ -168,11 +169,15 @@ open Package.swift
 - `xcodebuild` 始终使用完整设备 ID、受控 DerivedData、`-allowProvisioningUpdates` 与 `-allowProvisioningDeviceRegistration`；构建设置、Build、Install、Launch 的超时分别为 `60` 秒、`30` 分钟、`5` 分钟、`60` 秒。
 - 每次部署使用 `ProvisioningProfileRefreshMode.automatic`（原始值 `auto`）或 `.force`（原始值 `force`）：`auto` 只暂时隔离过期的 Team + Bundle 精确匹配缓存，`force` 暂时隔离所有精确匹配缓存；其他 Team、Bundle 或无法安全解析的 Profile 不得移动。
 - 安装前必须核验唯一 `.app` 的路径边界、Bundle ID、可执行文件、Team、代码签名、嵌入 Profile、设备 UDID、Profile 摘要与到期时间；`force` 还必须证明没有复用部署前的 Profile 摘要。
-- 核验成功后先写 `prepared` 宿主回执，再调用 `xcrun devicectl device install app --device <稳定 ID>`；安装命令完整成功后立即写 `installed`，再提交 Profile 事务并尝试 Launch。
+- 核验成功后先写 `prepared` 宿主回执，再调用 `xcrun devicectl device install app --device <稳定 ID>`；安装命令完整成功后立即写 `installed`，再提交 Profile 事务，写入并读回设备安装回执、复核安装容器，最后尝试 Launch。设备回执阶段每条命令超时为 `30` 秒，宿主等待上限 `31` 秒；普通同步失败只产生警告，进程树未确认仍阻止新部署。
 - 任一失败只在完整部署进程树已确认结束后回滚 Profile 事务；进程树不确定时保持事务 active、保留部署令牌并交给下次启动恢复，禁止并发恢复全局 Profile 缓存。
 - stdout 与 stderr 各自最多保留 `8 MiB` 的有界首尾转录，但实时输出不因持久化截断而停止；截断、超时或进程树未确认必须进入类型化诊断。
 
-设备 App 容器中的 `Library/Application Support/<候选目录名>/install-metadata.json` 是可选的首次接管有效期证据，不再是构建或安装依赖；候选名依次来自 App 名称、Bundle ID 末段、`.app` 目录名和通用目录 `App`。第一次接管既无可验证元数据、也无宿主回执的既有安装时，可以检查安装状态并执行续签，但旧安装的精确 Profile 到期时间可能在首次内置续签前未知。
+标准 iOS App 无需改代码。iOSSignKit 安装成功后写入 `Library/com.xuzw.iossignkit.install-receipt.json`，绑定设备、Bundle、Team、版本、Build、部署令牌、安装容器和已核验 Profile；文件不超过 `64 KiB`，采用带 SHA-256 的封装并读回核验。安装容器来自安装命令的结构化结果，不能把之后查询到的任意容器直接绑定本机产物。读取时优先消费与当前安装匹配的回执；部署令牌变化会使既有自动等待身份失效，跨 Mac 接管不使用本机最近成功时间作为新旧门槛。
+
+回执仅是受信任开发环境中的产物核验记录，校验和不是签名，也不提供跨 Mac 互斥；不宣称重新提取并核验了设备当前 Profile。同步失败不推翻安装成功，缺少当前证据时不能恢复自动续期。两台 Mac 都需支持该协议，历史无回执安装可通过一次内置安装生成；不得在普通只读刷新中根据历史状态补写设备回执。
+
+设备 App 容器中的 `Library/Application Support/<候选目录名>/install-metadata.json` 仅在设备明确报告独立回执不存在时作为可选兼容证据，不是构建或安装依赖；候选名依次来自 App 名称、Bundle ID 末段、`.app` 目录名和通用目录 `App`。回执损坏、不可读或属于其他安装时不得回退旧元数据；未绑定当前安装的旧证据不能因下一轮查询已记录新容器而重新生效。第一次接管既无可验证设备证据、也无宿主回执的既有安装时，可以检查安装状态并执行续签，但旧安装的精确 Profile 到期时间可能在首次内置续签前未知。
 
 ## 数据存储与系统集成
 

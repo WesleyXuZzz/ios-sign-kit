@@ -78,47 +78,47 @@ struct DeviceAppInspectorTests {
             profileSource: "embedded_mobileprovision"
         )
 
-        #expect(InstallMetadataValidator.validationFailure(
+        #expect(InstallMetadataValidator.validate(
             valid,
             requestedBundleID: "com.example.App",
             installedBundleID: "com.example.App",
             installedVersion: "1.0",
             installedBuildVersion: "1",
             now: now
-        ) == nil)
+        ) == .valid)
 
         var wrongBundle = valid
         wrongBundle.bundleIdentifier = "com.example.Other"
-        #expect(InstallMetadataValidator.validationFailure(
+        #expect(InstallMetadataValidator.validate(
             wrongBundle,
             requestedBundleID: "com.example.App",
             installedBundleID: "com.example.App",
             installedVersion: "1.0",
             installedBuildVersion: "1",
             now: now
-        ) != nil)
+        ) != .valid)
 
         var wrongVersion = valid
         wrongVersion.buildVersion = "2"
-        #expect(InstallMetadataValidator.validationFailure(
+        #expect(InstallMetadataValidator.validate(
             wrongVersion,
             requestedBundleID: "com.example.App",
             installedBundleID: "com.example.App",
             installedVersion: "1.0",
             installedBuildVersion: "1",
             now: now
-        ) != nil)
+        ) != .valid)
 
         var unsupported = valid
         unsupported.schemaVersion = 99
-        #expect(InstallMetadataValidator.validationFailure(
+        #expect(InstallMetadataValidator.validate(
             unsupported,
             requestedBundleID: "com.example.App",
             installedBundleID: "com.example.App",
             installedVersion: "1.0",
             installedBuildVersion: "1",
             now: now
-        ) != nil)
+        ) != .valid)
     }
 
     @Test
@@ -133,26 +133,26 @@ struct DeviceAppInspectorTests {
             expectedExpiryAt: now.addingTimeInterval(7 * 24 * 60 * 60),
             profileSource: "embedded_mobileprovision"
         )
-        #expect(InstallMetadataValidator.validationFailure(
+        #expect(InstallMetadataValidator.validate(
             future,
             requestedBundleID: "com.example.App",
             installedBundleID: "com.example.App",
             installedVersion: "1.0",
             installedBuildVersion: "1",
             now: now
-        ) != nil)
+        ) != .valid)
 
         var excessiveLifetime = future
         excessiveLifetime.recordedAt = now
         excessiveLifetime.expectedExpiryAt = now.addingTimeInterval(9 * 24 * 60 * 60)
-        #expect(InstallMetadataValidator.validationFailure(
+        #expect(InstallMetadataValidator.validate(
             excessiveLifetime,
             requestedBundleID: "com.example.App",
             installedBundleID: "com.example.App",
             installedVersion: "1.0",
             installedBuildVersion: "1",
             now: now
-        ) != nil)
+        ) != .valid)
     }
 }
 

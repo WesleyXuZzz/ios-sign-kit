@@ -359,6 +359,9 @@ final class RunningDeploy: @unchecked Sendable {
         )
         let logPath: String?
         var warnings: [String] = []
+        if let deviceReceiptWarning = executionResult.deviceReceiptWarning {
+            warnings.append(deviceReceiptWarning)
+        }
         if result.standardOutputWasTruncated
             || result.standardErrorWasTruncated {
             warnings.append(
@@ -396,7 +399,8 @@ final class RunningDeploy: @unchecked Sendable {
             processGroupTerminationWasConfirmed:
                 result.processGroupTerminationWasConfirmed,
             profileCacheRecoveryWasConfirmed:
-                executionResult.profileCacheRecoveryWasConfirmed
+                executionResult.profileCacheRecoveryWasConfirmed,
+            verifiedProfileDigest: executionResult.verifiedProfileDigest
         )
     }
 

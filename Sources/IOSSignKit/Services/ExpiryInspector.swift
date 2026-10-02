@@ -10,6 +10,10 @@ struct ExpiryInspector {
         if state.targetAppPresence == .confirmedNotInstalled {
             return nil
         }
+        if state.installationMetadataRequiresBinding,
+           !state.isTargetAppExpiryEvidenceVerified {
+            return nil
+        }
 
         if installedAppInfo == nil,
            state.activeInstallationSuccessAt == nil,
@@ -17,9 +21,13 @@ struct ExpiryInspector {
             return nil
         }
 
-        if installedAppInfo?.installMetadataValidation == .valid,
-           let installMetadata = installedAppInfo?.installMetadata,
-           minimumInstallMetadataRecordedAt.map({ installMetadata.recordedAt >= $0 }) ?? true,
+        if let installedAppInfo,
+           installedAppInfo.installMetadataValidation == .valid,
+           let installMetadata = installedAppInfo.installMetadata,
+           !state.installationMetadataRequiresBinding
+                || installMetadata.isBound(to: installedAppInfo.appURL),
+           installedAppInfo.currentDeviceInstallReceipt != nil
+                || (minimumInstallMetadataRecordedAt.map({ installMetadata.recordedAt >= $0 }) ?? true),
            let metadataExpiry = installMetadata.expectedExpiryAt {
             return ExpiryInfo(
                 estimatedExpiryAt: metadataExpiry,

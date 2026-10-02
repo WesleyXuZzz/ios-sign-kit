@@ -746,7 +746,13 @@ final class MenuBarViewModel: ObservableObject {
         if let installedAppInfo,
            let metadata = installedAppInfo.installMetadata,
            expiryInfo.source == .installMetadata(metadata.profileSource) {
-            return "已安装 App 元信息 · \(readableProfileSource(.installMetadata(metadata.profileSource)))"
+            if installedAppInfo.currentDeviceInstallReceipt != nil {
+                return "安装回执 · 已匹配当前安装 · 安装前核验的 Profile"
+            }
+            let binding = metadata.isBound(to: installedAppInfo.appURL)
+                ? "已匹配当前安装"
+                : "未绑定安装实例"
+            return "设备报告 · \(binding) · \(readableProfileSource(.installMetadata(metadata.profileSource)))"
         }
 
         if let lastExpiryVerifiedAt = state.lastExpiryVerifiedAt,
@@ -3551,7 +3557,10 @@ final class MenuBarViewModel: ObservableObject {
                 metadataWasStale: latestDeployInstalledAppMetadataWasStale
             )
             if latestDeployInstalledAppInspectionTimedOut {
-                deployMessage = "续签完成，但同步真机安装信息超时；已暂按本次续签时间估算，稍后将自动重试。"
+                deployMessage = state.expirySource == .verifiedDeploymentProfile
+                    && expiryInfo?.estimatedExpiryAt != nil
+                    ? "续签完成，但同步真机安装信息超时；已保留本次安装前核验的 Profile 有效期，稍后将自动重试。"
+                    : "续签完成，但同步真机安装信息超时；已暂按本次续签时间估算，稍后将自动重试。"
             }
             if let logWarning = result.logWarning {
                 deployMessage = "\(deployMessage ?? "续签已完成。") \(logWarning)"
@@ -4123,7 +4132,15 @@ final class MenuBarViewModel: ObservableObject {
             if case .completed(let appInfo?) = inspectionResult {
                 latestCandidate = appInfo
 
-                if let installMetadata = appInfo.installMetadata {
+                if appInfo.currentDeviceInstallReceipt != nil {
+                    latestDeployInstalledAppMetadataWasStale = false
+                    return appInfo
+                }
+                if appInfo.installMetadataValidation == .previousInstallation {
+                    latestDeployInstalledAppMetadataWasStale = true
+                    latestStaleMetadataCandidate = appInfo
+                } else if appInfo.installMetadataValidation == .valid,
+                          let installMetadata = appInfo.installMetadata {
                     if installMetadata.recordedAt >= minimumMetadataRecordedAt {
                         latestDeployInstalledAppMetadataWasStale = false
                         return appInfo
@@ -4143,6 +4160,9 @@ final class MenuBarViewModel: ObservableObject {
         }
 
         if let latestStaleMetadataCandidate {
+            if latestStaleMetadataCandidate.installMetadataValidation == .previousInstallation {
+                return latestStaleMetadataCandidate
+            }
             return appInfoWithoutInstallMetadata(latestStaleMetadataCandidate)
         }
 
@@ -4209,6 +4229,9 @@ final class MenuBarViewModel: ObservableObject {
         }
 
         if metadataWasStale {
+            if state.expirySource == .verifiedDeploymentProfile {
+                return "续签完成，设备元数据尚未更新；本次安装前核验的 Profile 到期时间为 \(absoluteDateTimeString(for: latestExpiry))。"
+            }
             return "续签完成，但真机安装元信息尚未更新，暂按本次续签时间估算为 \(absoluteDateTimeString(for: latestExpiry))。"
         }
 
@@ -4779,6 +4802,8 @@ final class MenuBarViewModel: ObservableObject {
 
     private func readableProfileSource(_ source: ExpirySource) -> String {
         switch source {
+        case .installMetadata(DeviceInstallReceipt.source):
+            return "设备安装回执中的已核验 Profile"
         case .installMetadata("embedded_mobileprovision"):
             return "embedded.mobileprovision"
         case .verifiedDeploymentProfile:

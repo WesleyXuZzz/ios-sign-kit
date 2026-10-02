@@ -7,6 +7,8 @@ struct InstallationIdentitySnapshot: Equatable, Hashable, Sendable {
     let version: String?
     let buildVersion: String?
     let appURL: String?
+    let profileDigest: String?
+    let installationToken: String?
     let activeInstallationSuccessAt: Date?
     let expiryEvidenceIsVerified: Bool
 
@@ -18,7 +20,9 @@ struct InstallationIdentitySnapshot: Equatable, Hashable, Sendable {
         buildVersion: String?,
         appURL: String?,
         activeInstallationSuccessAt: Date?,
-        expiryEvidenceIsVerified: Bool
+        expiryEvidenceIsVerified: Bool,
+        profileDigest: String? = nil,
+        installationToken: String? = nil
     ) {
         self.presence = presence
         self.bundleID = bundleID
@@ -26,6 +30,8 @@ struct InstallationIdentitySnapshot: Equatable, Hashable, Sendable {
         self.version = version
         self.buildVersion = buildVersion
         self.appURL = appURL
+        self.profileDigest = profileDigest
+        self.installationToken = installationToken
         self.activeInstallationSuccessAt = activeInstallationSuccessAt
         self.expiryEvidenceIsVerified = expiryEvidenceIsVerified
     }
@@ -40,7 +46,9 @@ struct InstallationIdentitySnapshot: Equatable, Hashable, Sendable {
             appURL: state.targetAppURL,
             activeInstallationSuccessAt: state.activeInstallationSuccessAt,
             expiryEvidenceIsVerified:
-                state.isTargetAppExpiryEvidenceVerified
+                state.isTargetAppExpiryEvidenceVerified,
+            profileDigest: state.targetAppProfileDigest,
+            installationToken: state.targetAppInstallationToken
         )
     }
 }

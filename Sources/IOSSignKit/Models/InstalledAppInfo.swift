@@ -9,6 +9,15 @@ struct InstalledAppInfo: Codable, Equatable, Sendable {
     var builtByDeveloper: Bool
     var installMetadata: AppInstallMetadataSnapshot?
     var installMetadataValidation: InstallMetadataValidation = .notFound
+    var deviceInstallReceipt: DeviceInstallReceipt? = nil
+
+    var currentDeviceInstallReceipt: DeviceInstallReceipt? {
+        guard installMetadataValidation == .valid,
+              let deviceInstallReceipt,
+              deviceInstallReceipt.metadata == installMetadata,
+              deviceInstallReceipt.metadata?.isBound(to: appURL) == true else { return nil }
+        return deviceInstallReceipt
+    }
 }
 
 enum InstalledAppIdentity {
@@ -52,6 +61,7 @@ enum InstalledAppIdentity {
 enum InstallMetadataValidation: Codable, Equatable, Sendable {
     case notFound
     case valid
+    case previousInstallation
     case invalid(String)
     case unavailable(String)
 }

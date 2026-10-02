@@ -9,7 +9,7 @@ iOSSignKit 是基于 Swift 6.3、SwiftUI 和 AppKit 的 macOS 菜单栏应用，
 本仓库不内建完整的 iOS 构建工程，也不替代 Xcode。系统边界是：
 
 - iOSSignKit 负责目标解析、设备证据、策略、安全预检、Xcode 构建编排、签名产物核验、真机安装、反馈和审计。
-- 外部 iOS 项目只需提供标准 Project/Workspace、可发现的 Scheme 和自动签名 iOS App Target，不需要 iOSSignKit 专用脚本。
+- 外部 iOS 项目只需提供标准 Project/Workspace、可发现的 Scheme 和自动签名 iOS App Target，不需要修改源码、接入 SDK 或添加 iOSSignKit 专用脚本、Build Phase。
 - Xcode、`xcrun`、CoreDevice、系统通知和登录项是外部运行依赖。
 
 ## 2. 代码组织
@@ -165,15 +165,21 @@ Swift、SwiftUI 或 Objective-C 不是能力边界；是否生成可独立安装
 
 ## 8. 安装状态与过期推断
 
-`DeviceAppInspector` 查询目标 App 是否安装，并读取可用的安装元信息。过期时间由 `ExpiryInspector` 按以下顺序推断：
+`DeviceAppInspector` 查询目标 App 是否安装，优先读取 `DeviceInstallReceipt`，并在回执读取前后确认当前容器一致；只有明确不存在回执时才兼容读取目标 App 的可选元信息。过期时间由 `ExpiryInspector` 按以下顺序推断：
 
-1. 当前安装元信息中的 `expectedExpiryAt`。
+1. 已绑定当前安装的设备回执（或通过兼容校验的元信息）中的精确 Profile 到期时间。
 2. 与当前目标绑定的 `lastDetectedExpiryAt`。
 3. 当前安装实例的最近成功时间加个人签名有效期 7 天。
 
 目标 App 的 `install-metadata.json` 是可选证据，不是部署依赖。内置部署会在安装前直接从已签名 `.app` 的嵌入 Profile 得到精确到期时间，并在 `installed` 宿主回执和状态结算中绑定设备、Bundle、版本、Build 与 Profile。启动恢复只有在精确令牌、当前设备和 Bundle 全部匹配时才能用该回执重建成功状态。
 
-第一次接管既无可验证安装元信息、也无宿主回执的既有安装时，可以确认 App 是否存在并执行续签，但旧安装的精确 Profile 到期时间可能未知；首次内置续签成功后不再依赖目标 App 写专用元数据。
+`DeviceInstallReceiptPublisher` 在安装成功后，从安装命令 JSON 的 `installedApplications` 获取本次容器身份，构造包含已核验 Profile 的 `installed` 回执，写入设备 App 数据容器的 `Library/com.xuzw.iossignkit.install-receipt.json`，读回逐字节核对，并在写入前后查询当前安装。文件最多 `64 KiB`，带 payload SHA-256；不修改目标源码或签名包，也不依赖目标 App 启动。若安装结果缺少唯一容器身份，则报告同步未完成，禁止以稍后查询结果替代本次安装身份。
+
+另一台 Mac 校验回执 schema、摘要、设备、Bundle、版本、Build、开发者安装来源、时间关系及当前容器后接管有效期。回执安装时间由生成它的 Mac 记录，不与接管 Mac 的 `activeInstallationSuccessAt` 比较；容器、Profile 摘要或部署令牌变化会失效旧安装证据、提醒冷却和自动等待身份。Profile 摘要只标识 Profile 字节，部署令牌才区分 iOSSignKit 的安装事务。
+
+设备回执记录历史产物核验结果，不等同于从设备重新提取当前 Profile。SHA-256 封装是传输完整性校验，不是数字签名或分布式锁，不保证两台 Mac 同时部署的互斥。两台 Mac 均须支持回执协议。回执损坏、不可读或属于旧容器时不能借旧 App 元信息恢复自动续期；发现安装身份变化后，未绑定当前容器的旧格式元数据持续无效。
+
+第一次接管既无有效设备证据、也无宿主回执的既有安装时，安装状态可以检查，也可手动续签，但精确到期时间可能未知；首次内置安装成功并同步回执后即可跨 Mac 接管。普通检查保持只读，不根据历史状态补写设备回执。
 
 历史记录的 `lastSuccessAt` 只用于展示和审计。App 已确认卸载、安装身份变化或目标切换后，不得用历史成功恢复当前安装实例的过期推断。
 
@@ -228,9 +234,10 @@ flowchart TD
 3. `ProvisioningProfileCacheManager` 在两个标准 Profile 缓存目录中开启 Team + Bundle 精确事务；`auto` 只隔离已过期匹配项，`force` 隔离全部匹配项。
 4. 使用完整设备 ID、受控 DerivedData、`-allowProvisioningUpdates` 和 `-allowProvisioningDeviceRegistration` 直接执行 `xcodebuild build`。
 5. `SignedIOSAppInspector` 在安装前核验唯一 `.app` 的路径、Info、可执行文件、Bundle ID、代码签名、Team、嵌入 Profile、设备授权、摘要和精确到期时间；`force` 不允许复用事务前 Profile 摘要。
-6. `HostInstallReceiptStore` 先写 `prepared` 回执，再执行 `xcrun devicectl device install app --device <稳定 ID>`；完整成功后立即写 `installed`，提交 Profile 事务，最后尝试启动 App。
+6. `HostInstallReceiptStore` 先写 `prepared` 回执，再执行 `xcrun devicectl device install app --device <稳定 ID>`；完整成功后立即写 `installed`，提交 Profile 事务。
+7. `DeviceInstallReceiptPublisher` 写入并读回设备安装回执，复核容器后再尝试启动 App。
 
-构建设置、Build、Install 和 Launch 的有限超时分别为 `60` 秒、`30` 分钟、`5` 分钟和 `60` 秒。stdout 与 stderr 各自最多持久化 `8 MiB` 首尾转录，实时输出不因持久化截断而停止。Launch 失败只产生“已安装但未自动启动”诊断，不推翻已核验的安装成功。
+构建设置、Build、Install 和 Launch 的有限超时分别为 `60` 秒、`30` 分钟、`5` 分钟和 `60` 秒。设备回执查询与复制命令各设置 `30` 秒工具超时、`31` 秒宿主等待上限，并服从同一部署取消和所有权跟踪。回执同步失败保留安装成功并在日志、结果反馈中显示警告；后续无法获得当前安装证据时有效期未知。stdout 与 stderr 各自最多持久化 `8 MiB` 首尾转录，实时输出不因持久化截断而停止。Launch 失败只产生“已安装但未自动启动”诊断，不推翻已核验的安装成功。
 
 Profile 缓存属于用户级共享状态，恢复必须服从部署进程所有权：只有完整进程树确认结束后才能 rollback。超时、取消或失败若仍有未确认进程，则事务保持 active、部署令牌保留，并由下次启动在进程恢复完成后处理；不能为了快速返回而与仍运行的 Xcode 进程并发恢复 Profile。
 

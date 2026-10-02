@@ -46,7 +46,7 @@
 
 ## 目标 iOS 项目约定
 
-目标仓库不需要包含 `ios-device.command`、Shell 包装器或其他 iOSSignKit 专用文件。工具会在所选目录中递归发现：
+目标仓库不需要修改源码、添加 SDK、Build Phase、`ios-device.command` 或其他 iOSSignKit 专用文件。工具会在所选目录中递归发现：
 
 - 项目目录内非依赖、非构建目录中的 `.xcodeproj`
 - 项目目录内非依赖、非构建目录中的 `.xcworkspace`
@@ -69,13 +69,18 @@
 2. 按 Development Team 与 Bundle ID 精确处理本机 Provisioning Profile 缓存；`auto` 只隔离已过期的精确匹配项，`force` 隔离全部精确匹配项。
 3. 直接调用 `xcodebuild`，允许 Xcode 更新 Profile 和注册设备。
 4. 在安装前核验生成的 `.app`、Bundle ID、可执行文件、代码签名、Team、设备授权、Profile 摘要和精确到期时间。
-5. 先持久化安装前宿主回执，再用 `xcrun devicectl device install app` 安装；安装成功后立即标记回执，最后尝试启动 App。
+5. 先持久化安装前宿主回执，再用 `xcrun devicectl device install app` 安装；安装成功后立即标记回执并提交 Profile 缓存事务。
+6. iOSSignKit 根据安装命令返回的容器身份，把独立的安装回执写入目标 App 数据容器，读回校验并复核当前安装，最后尝试启动 App。回执同步不依赖目标 App 启动。
 
 当存在同名设备时，iOSSignKit 会拒绝部署，避免仅靠名称安装到错误真机。固定目标设备按稳定设备 ID 匹配；该 ID 当前不可用时不会回退到同名设备、唯一可用设备或其他 iPhone。
 
 构建、Profile 解码、签名核验和安装命令均由 iOSSignKit 直接启动并实时汇总输出。内部部署令牌、进程组和只读所有权标记用于取消、超时及异常退出恢复；目标仓库无需感知或转发这些内部标识。
 
-目标 App 可以选择写入安装元信息，但这不再是构建或安装的前置条件。工具会在设备 App 容器中依次尝试以下候选目录名：
+跨 Mac 接管通过 `Library/com.xuzw.iossignkit.install-receipt.json` 完成。它由 iOSSignKit 在安装成功后生成，记录设备、Bundle ID、Team、版本、Build、部署令牌、安装容器、安装时间以及安装前核验的 Profile 摘要和精确到期时间；目标 App 无需知道该文件。另一台 Mac 读取后核对当前安装，版本和 Build 相同也按容器与部署令牌区分。两台 Mac 均需使用支持该回执的 iOSSignKit；历史安装没有回执时，完成一次内置安装即可生成。
+
+回执写入或读回失败会显示警告，安装成功的事实与本机产物核验记录仍保留；另一台 Mac 缺少当前安装证据时显示有效期未知。回执描述的是安装前已核验的产物，并非从设备重新提取当前 Profile；摘要用于检查传输完整性，不是数字签名或跨 Mac 部署锁。该机制不负责协调两台 Mac 同时发起安装。
+
+仅在设备明确报告回执不存在时，才兼容读取目标 App 原有的可选安装元信息；新项目不需要实现这套协议。候选目录名依次为：
 
 - `devicectl` 返回的 App 名称
 - Bundle ID 的最后一段
@@ -104,7 +109,7 @@ Library/Application Support/<候选目录名>/install-metadata.json
 
 `recordedAt` 和可选的 `expectedExpiryAt` 使用 ISO 8601 时间。Bundle ID、短版本和 Build 必须与当前安装实例完全一致；`recordedAt` 最多允许比当前时间快 `5` 分钟，`expectedExpiryAt` 不得早于 `recordedAt` 超过 `5` 分钟，也不得晚于它超过 `8` 天。`profileSource` 必须为不超过 `256` UTF-8 字节的非空文本，且不能包含控制字符。无法验证的元数据不会覆盖已知状态。
 
-第一次接管一个已经安装、但既没有可验证安装元信息、也没有 iOSSignKit 宿主回执的 App 时，系统可以确认安装状态并执行续签，但可能暂时无法得到旧安装的精确 Profile 到期时间。第一次内置续签完成后，iOSSignKit 会从已核验产物记录精确到期时间，后续检查不要求目标 App 写入专用文件。
+第一次接管既无有效设备回执、可验证安装元信息，也无本机宿主回执的既有 App 时，可以确认安装状态并手动续签，但旧安装的精确 Profile 到期时间可能未知。回执损坏、无法读取或属于其他安装时，不会退回旧元数据来授权自动续期。检测到外部安装变化后，未绑定当前容器的旧元数据持续失效。安装成功不保证延长有效期；复用相同 Profile 时到期时间不变。
 
 ## 自动化边界
 
