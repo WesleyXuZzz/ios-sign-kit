@@ -215,6 +215,29 @@ struct DeviceAppInspector {
             // App metadata. An unreadable/corrupt receipt cannot be bypassed.
             if result.processGroupTerminationWasConfirmed,
                Self.isExplicitMissingMetadataFile(diagnostic) { return nil }
+            // CoreDevice can report a missing file as a generic node lookup
+            // failure, without an underlying file-not-found error. Confirm
+            // absence with a complete directory listing before using metadata.
+            if result.processGroupTerminationWasConfirmed,
+               diagnostic.contains("Failed to retrieve the file node for \(DeviceInstallReceipt.containerPath)"),
+               diagnostic.contains("com.apple.dt.CoreDeviceError error 7000") {
+                do {
+                    if try await deviceReceiptIsAbsent(
+                        device: device,
+                        bundleID: bundleID,
+                        commandTimeoutSeconds: commandTimeoutSeconds,
+                        outerTimeoutSeconds: outerTimeoutSeconds
+                    ) {
+                        return nil
+                    }
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    return (nil, .unavailable(DiagnosticText.bounded(
+                        "无法确认设备安装回执是否存在：\(error.localizedDescription)\n\(diagnostic)"
+                    )))
+                }
+            }
             return (nil, .unavailable(diagnostic.isEmpty ? "无法读取设备安装回执。" : diagnostic))
         }
         do {
@@ -224,6 +247,45 @@ struct DeviceAppInspector {
         } catch {
             return (nil, .invalid("设备安装回执无效：\(DiagnosticText.bounded(error.localizedDescription))"))
         }
+    }
+
+    private func deviceReceiptIsAbsent(
+        device: DeviceInfo,
+        bundleID: String,
+        commandTimeoutSeconds: TimeInterval,
+        outerTimeoutSeconds: TimeInterval
+    ) async throws -> Bool {
+        let receiptPath = DeviceInstallReceipt.containerPath as NSString
+        let outputURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("device-receipt-files-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+
+        let result = try await runCommand("/usr/bin/xcrun", [
+            "devicectl", "device", "info", "files",
+            "--device", device.id,
+            "--domain-type", "appDataContainer",
+            "--domain-identifier", bundleID,
+            "--subdirectory", receiptPath.deletingLastPathComponent,
+            "--no-recurse",
+            "--json-output", outputURL.path,
+            "--timeout", "\(Int(ceil(commandTimeoutSeconds)))"
+        ], outerTimeoutSeconds)
+        guard result.completedSuccessfullyAndFullyTerminated else {
+            let diagnostic = result.standardError.isEmpty
+                ? result.standardOutput
+                : result.standardError
+            throw DeviceAppInspectorError.commandFailed(DiagnosticText.bounded(diagnostic))
+        }
+        let data = try BoundedFileReader().data(
+            at: outputURL,
+            maximumBytes: BoundedFileReader.structuredOutputMaximumBytes
+        )
+        let response = try decoder.decode(DeviceContainerFilesResponse.self, from: data)
+        guard response.result.domain == "appDataContainer",
+              response.result.domainIdentifier == bundleID else {
+            throw DeviceAppInspectorError.invalidResponse("设备返回的文件列表不属于目标 App 数据容器。")
+        }
+        return !response.result.files.contains { $0.name == receiptPath.lastPathComponent }
     }
 
     private func fetchInstallMetadata(
@@ -471,6 +533,20 @@ struct InstallMetadataValidator {
 private struct InstallMetadataFetchResult {
     let metadata: AppInstallMetadataSnapshot?
     let validation: InstallMetadataValidation
+}
+
+private struct DeviceContainerFilesResponse: Decodable {
+    struct Result: Decodable {
+        struct File: Decodable {
+            let name: String
+        }
+
+        let domain: String
+        let domainIdentifier: String
+        let files: [File]
+    }
+
+    let result: Result
 }
 
 enum DeviceAppInspectorError: Error, LocalizedError {
