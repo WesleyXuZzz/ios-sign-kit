@@ -1,7 +1,6 @@
 import AppKit
 import SwiftUI
 import Combine
-import QuartzCore
 
 @MainActor
 enum MainPanelWindowGeometry {
@@ -21,175 +20,12 @@ enum MainPanelWindowGeometry {
     }
 }
 
-struct StatusBarTransitionSnapshot: Equatable {
+private struct StatusBarDisplaySnapshot: Equatable {
     var title: String
-    var iconTransitionIdentity: MenuBarIconTransitionIdentity
-    var titleGroup: MenuBarTitleTransitionGroup
-    var titleWidthTier: MenuBarTitleWidthTier = .standard
-    var titleFontStyle: MenuBarTitleFontStyle = .status
-    var accessibilityLabel: String = ""
-    var ringFraction: Double = 0.25
-    var ringTone: StatusTone = .neutral
-}
-
-enum StatusBarTitleTransition: Equatable {
-    case immediate
-    case crossfade(duration: TimeInterval)
-    case semanticPush(duration: TimeInterval, verticalOffset: CGFloat)
-}
-
-enum StatusBarIconTransition: Equatable {
-    case immediate
-    case crossfade(duration: TimeInterval)
-}
-
-struct StatusBarTransitionDecision: Equatable {
-    var title: StatusBarTitleTransition
-    var icon: StatusBarIconTransition
-}
-
-enum StatusBarWidthTransition: Equatable {
-    case unchanged
-    case applyImmediately(MenuBarTitleWidthTier)
-    case shrinkAfterTransition(
-        tier: MenuBarTitleWidthTier,
-        delay: TimeInterval,
-        generation: Int
-    )
-}
-
-enum StatusBarTransitionPolicy {
-    static let semanticTitleDuration: TimeInterval = 0.18
-    static let expiryTitleDuration: TimeInterval = 0.12
-    static let iconDuration: TimeInterval = 0.14
-    static let semanticTitleOffset: CGFloat = 3
-
-    static func decision(
-        previous: StatusBarTransitionSnapshot?,
-        next: StatusBarTransitionSnapshot,
-        reduceMotion: Bool
-    ) -> StatusBarTransitionDecision {
-        guard let previous, !reduceMotion else {
-            return StatusBarTransitionDecision(title: .immediate, icon: .immediate)
-        }
-
-        let titleTransition: StatusBarTitleTransition
-        if previous.title == next.title {
-            titleTransition = .immediate
-        } else if previous.titleGroup == .expiry, next.titleGroup == .expiry {
-            titleTransition = .crossfade(duration: expiryTitleDuration)
-        } else {
-            titleTransition = .semanticPush(
-                duration: semanticTitleDuration,
-                verticalOffset: semanticTitleOffset
-            )
-        }
-
-        let iconTransition: StatusBarIconTransition =
-            previous.iconTransitionIdentity == next.iconTransitionIdentity
-                && previous.ringFraction == next.ringFraction
-                && previous.ringTone == next.ringTone
-                ? .immediate
-                : .crossfade(duration: iconDuration)
-
-        return StatusBarTransitionDecision(title: titleTransition, icon: iconTransition)
-    }
-
-    static func shouldApply(
-        previous: StatusBarTransitionSnapshot?,
-        next: StatusBarTransitionSnapshot,
-        forceImmediate: Bool
-    ) -> Bool {
-        forceImmediate || previous != next
-    }
-
-    static func duration(of transition: StatusBarTitleTransition) -> TimeInterval {
-        switch transition {
-        case .immediate:
-            0
-        case let .crossfade(duration), let .semanticPush(duration, _):
-            duration
-        }
-    }
-}
-
-struct StatusBarTransitionState {
-    private(set) var snapshot: StatusBarTransitionSnapshot?
-    private(set) var generation = 0
-
-    mutating func transition(
-        to next: StatusBarTransitionSnapshot,
-        reduceMotion: Bool
-    ) -> StatusBarTransitionDecision {
-        let decision = StatusBarTransitionPolicy.decision(
-            previous: snapshot,
-            next: next,
-            reduceMotion: reduceMotion
-        )
-        snapshot = next
-        generation += 1
-        return decision
-    }
-}
-
-struct StatusBarWidthTransitionState {
-    private(set) var appliedTier: MenuBarTitleWidthTier?
-    private(set) var targetTier: MenuBarTitleWidthTier?
-    private(set) var generation = 0
-
-    init(appliedTier: MenuBarTitleWidthTier? = nil) {
-        self.appliedTier = appliedTier
-        self.targetTier = appliedTier
-    }
-
-    mutating func transition(
-        to nextTier: MenuBarTitleWidthTier,
-        titleTransition: StatusBarTitleTransition,
-        reduceMotion: Bool
-    ) -> StatusBarWidthTransition {
-        generation += 1
-        targetTier = nextTier
-
-        guard let appliedTier else {
-            self.appliedTier = nextTier
-            return .applyImmediately(nextTier)
-        }
-
-        guard appliedTier != nextTier else {
-            return .unchanged
-        }
-
-        let isExpansion =
-            StatusBarWidthMetrics.statusItemLength(for: nextTier)
-                > StatusBarWidthMetrics.statusItemLength(for: appliedTier)
-        if reduceMotion || isExpansion {
-            self.appliedTier = nextTier
-            return .applyImmediately(nextTier)
-        }
-
-        let delay = StatusBarTransitionPolicy.duration(of: titleTransition)
-        guard delay > 0 else {
-            self.appliedTier = nextTier
-            return .applyImmediately(nextTier)
-        }
-
-        return .shrinkAfterTransition(
-            tier: nextTier,
-            delay: delay,
-            generation: generation
-        )
-    }
-
-    mutating func completeDelayedShrink(
-        to tier: MenuBarTitleWidthTier,
-        generation: Int
-    ) -> Bool {
-        guard self.generation == generation, targetTier == tier else {
-            return false
-        }
-        appliedTier = tier
-        return true
-    }
+    var titleFontStyle: MenuBarTitleFontStyle
+    var accessibilityLabel: String
+    var ringFraction: Double
+    var ringTone: StatusTone
 }
 
 @MainActor
@@ -210,31 +46,6 @@ enum StatusBarTitleFontProvider {
                 weight: .semibold
             )
         }
-    }
-}
-
-enum StatusBarWidthMetrics {
-    static let iconWidth: CGFloat = 16
-    static let iconTitleSpacing: CGFloat = 8
-    static let horizontalInset: CGFloat = 1
-    static let compactTitleWidth: CGFloat = 24
-    static let standardTitleWidth: CGFloat = 41
-
-    static func titleWidth(for tier: MenuBarTitleWidthTier) -> CGFloat {
-        switch tier {
-        case .compact:
-            compactTitleWidth
-        case .standard:
-            standardTitleWidth
-        }
-    }
-
-    static func statusItemLength(for tier: MenuBarTitleWidthTier) -> CGFloat {
-        horizontalInset
-            + iconWidth
-            + iconTitleSpacing
-            + titleWidth(for: tier)
-            + horizontalInset
     }
 }
 
@@ -300,319 +111,13 @@ enum StatusMenuLayout {
 }
 
 @MainActor
-private final class StatusTitleTransitionView: NSView {
-    private let outgoingField = NSTextField(labelWithString: "")
-    private let incomingField = NSTextField(labelWithString: "")
-    private var targetTitle = ""
-    private var targetFont: NSFont
-
-    init(font: NSFont) {
-        targetFont = font
-        super.init(frame: .zero)
-        wantsLayer = true
-        configure(field: outgoingField, font: font)
-        configure(field: incomingField, font: font)
-        addSubview(outgoingField)
-        addSubview(incomingField)
-
-        NSLayoutConstraint.activate([
-            outgoingField.leadingAnchor.constraint(equalTo: leadingAnchor),
-            outgoingField.trailingAnchor.constraint(equalTo: trailingAnchor),
-            outgoingField.centerYAnchor.constraint(equalTo: centerYAnchor),
-            incomingField.leadingAnchor.constraint(equalTo: leadingAnchor),
-            incomingField.trailingAnchor.constraint(equalTo: trailingAnchor),
-            incomingField.centerYAnchor.constraint(equalTo: centerYAnchor)
-        ])
-
-        showImmediately("")
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    func display(
-        title: String,
-        font: NSFont,
-        transition: StatusBarTitleTransition
-    ) {
-        let wasAnimating = !(incomingField.layer?.animationKeys() ?? []).isEmpty
-        cancelAnimations()
-
-        guard !wasAnimating, !targetTitle.isEmpty, transition != .immediate else {
-            targetTitle = title
-            targetFont = font
-            showImmediately(title, font: font)
-            return
-        }
-
-        outgoingField.stringValue = targetTitle
-        outgoingField.font = targetFont
-        incomingField.stringValue = title
-        incomingField.font = font
-        prepareForAnimation()
-        targetTitle = title
-        targetFont = font
-
-        switch transition {
-        case .immediate:
-            showImmediately(title, font: font)
-        case let .crossfade(duration):
-            animateCrossfade(duration: duration)
-        case let .semanticPush(duration, verticalOffset):
-            animateSemanticPush(duration: duration, verticalOffset: verticalOffset)
-        }
-    }
-
-    func finishImmediately() {
-        cancelAnimations()
-        showImmediately(targetTitle, font: targetFont)
-    }
-
-    private func configure(field: NSTextField, font: NSFont) {
-        field.font = font
-        field.textColor = .labelColor
-        field.alignment = .left
-        field.lineBreakMode = .byClipping
-        field.translatesAutoresizingMaskIntoConstraints = false
-        field.setContentCompressionResistancePriority(.required, for: .horizontal)
-        field.wantsLayer = true
-    }
-
-    private func prepareForAnimation() {
-        outgoingField.layer?.opacity = 1
-        outgoingField.layer?.transform = CATransform3DIdentity
-        incomingField.layer?.opacity = 0
-        incomingField.layer?.transform = CATransform3DIdentity
-    }
-
-    private func showImmediately(_ title: String, font: NSFont? = nil) {
-        let font = font ?? targetFont
-        outgoingField.stringValue = title
-        outgoingField.font = font
-        incomingField.stringValue = title
-        incomingField.font = font
-        outgoingField.layer?.opacity = 1
-        outgoingField.layer?.transform = CATransform3DIdentity
-        incomingField.layer?.opacity = 0
-        incomingField.layer?.transform = CATransform3DIdentity
-    }
-
-    private func cancelAnimations() {
-        outgoingField.layer?.removeAllAnimations()
-        incomingField.layer?.removeAllAnimations()
-    }
-
-    private func animateCrossfade(duration: TimeInterval) {
-        addOpacityAnimation(
-            to: outgoingField.layer,
-            from: 1,
-            to: 0,
-            duration: duration
-        )
-        addOpacityAnimation(
-            to: incomingField.layer,
-            from: 0,
-            to: 1,
-            duration: duration
-        )
-    }
-
-    private func animateSemanticPush(duration: TimeInterval, verticalOffset: CGFloat) {
-        addAnimationGroup(
-            to: outgoingField.layer,
-            opacityFrom: 1,
-            opacityTo: 0,
-            translationFrom: 0,
-            translationTo: verticalOffset,
-            duration: duration
-        )
-        addAnimationGroup(
-            to: incomingField.layer,
-            opacityFrom: 0,
-            opacityTo: 1,
-            translationFrom: -verticalOffset,
-            translationTo: 0,
-            duration: duration
-        )
-    }
-
-    private func addOpacityAnimation(
-        to layer: CALayer?,
-        from: Float,
-        to: Float,
-        duration: TimeInterval
-    ) {
-        guard let layer else { return }
-        layer.opacity = to
-        let animation = CABasicAnimation(keyPath: "opacity")
-        animation.fromValue = from
-        animation.toValue = to
-        animation.duration = duration
-        animation.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)
-        layer.add(animation, forKey: "status-opacity")
-    }
-
-    private func addAnimationGroup(
-        to layer: CALayer?,
-        opacityFrom: Float,
-        opacityTo: Float,
-        translationFrom: CGFloat,
-        translationTo: CGFloat,
-        duration: TimeInterval
-    ) {
-        guard let layer else { return }
-        layer.opacity = opacityTo
-        layer.transform = CATransform3DMakeTranslation(0, translationTo, 0)
-
-        let opacity = CABasicAnimation(keyPath: "opacity")
-        opacity.fromValue = opacityFrom
-        opacity.toValue = opacityTo
-
-        let translation = CABasicAnimation(keyPath: "transform.translation.y")
-        translation.fromValue = translationFrom
-        translation.toValue = translationTo
-
-        let group = CAAnimationGroup()
-        group.animations = [opacity, translation]
-        group.duration = duration
-        group.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)
-        layer.add(group, forKey: "status-title-transition")
-    }
-}
-
-@MainActor
-private final class StatusIconTransitionView: NSView {
-    private let outgoingImageView = NSImageView()
-    private let incomingImageView = NSImageView()
-    private var targetImage: NSImage?
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        wantsLayer = true
-        configure(imageView: outgoingImageView)
-        configure(imageView: incomingImageView)
-        addSubview(outgoingImageView)
-        addSubview(incomingImageView)
-
-        NSLayoutConstraint.activate([
-            outgoingImageView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            outgoingImageView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            outgoingImageView.topAnchor.constraint(equalTo: topAnchor),
-            outgoingImageView.bottomAnchor.constraint(equalTo: bottomAnchor),
-            incomingImageView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            incomingImageView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            incomingImageView.topAnchor.constraint(equalTo: topAnchor),
-            incomingImageView.bottomAnchor.constraint(equalTo: bottomAnchor)
-        ])
-    }
-
-    convenience init() {
-        self.init(frame: .zero)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    func display(image: NSImage?, transition: StatusBarIconTransition) {
-        let wasAnimating = !(incomingImageView.layer?.animationKeys() ?? []).isEmpty
-        cancelAnimations()
-
-        guard !wasAnimating, targetImage != nil, transition != .immediate else {
-            targetImage = image
-            showImmediately(image)
-            return
-        }
-
-        outgoingImageView.image = targetImage
-        incomingImageView.image = image
-        outgoingImageView.layer?.opacity = 1
-        incomingImageView.layer?.opacity = 0
-        targetImage = image
-
-        switch transition {
-        case .immediate:
-            showImmediately(image)
-        case let .crossfade(duration):
-            addOpacityAnimation(
-                to: outgoingImageView.layer,
-                from: 1,
-                to: 0,
-                duration: duration
-            )
-            addOpacityAnimation(
-                to: incomingImageView.layer,
-                from: 0,
-                to: 1,
-                duration: duration
-            )
-        }
-    }
-
-    func updateAccessibilityLabel(_ label: String) {
-        for image in [outgoingImageView.image, incomingImageView.image] {
-            if image?.accessibilityDescription != label {
-                image?.accessibilityDescription = label
-            }
-        }
-    }
-
-    func finishImmediately() {
-        cancelAnimations()
-        showImmediately(targetImage)
-    }
-
-    private func configure(imageView: NSImageView) {
-        imageView.imageScaling = .scaleProportionallyDown
-        imageView.translatesAutoresizingMaskIntoConstraints = false
-        imageView.wantsLayer = true
-    }
-
-    private func showImmediately(_ image: NSImage?) {
-        outgoingImageView.image = image
-        incomingImageView.image = image
-        outgoingImageView.layer?.opacity = 1
-        incomingImageView.layer?.opacity = 0
-    }
-
-    private func cancelAnimations() {
-        outgoingImageView.layer?.removeAllAnimations()
-        incomingImageView.layer?.removeAllAnimations()
-    }
-
-    private func addOpacityAnimation(
-        to layer: CALayer?,
-        from: Float,
-        to: Float,
-        duration: TimeInterval
-    ) {
-        guard let layer else { return }
-        layer.opacity = to
-        let animation = CABasicAnimation(keyPath: "opacity")
-        animation.fromValue = from
-        animation.toValue = to
-        animation.duration = duration
-        animation.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)
-        layer.add(animation, forKey: "status-icon-opacity")
-    }
-}
-
-@MainActor
 final class StatusBarController: NSObject, NSWindowDelegate, NSMenuDelegate {
     private enum StatusItemLayout {
-        static let height: CGFloat = 16
+        static let iconDiameter: CGFloat = 16
     }
 
     private let viewModel: MenuBarViewModel
     private let statusItem: NSStatusItem
-    private let statusStackView = NSStackView()
-    private let statusIconView = StatusIconTransitionView()
-    private let statusTitleView = StatusTitleTransitionView(
-        font: StatusBarTitleFontProvider.font(for: .status)
-    )
     private let contextMenu = NSMenu()
     private let statusMenuHeaderView = StatusMenuHeaderView()
     private let statusMenuHeaderItem = NSMenuItem()
@@ -624,12 +129,7 @@ final class StatusBarController: NSObject, NSWindowDelegate, NSMenuDelegate {
     private var visualQASettingsScrollAnchor: UnitPoint = .top
     private var stateCancellable: AnyCancellable?
     private var isContextMenuOpen = false
-    private var transitionState = StatusBarTransitionState()
-    private var widthTransitionState = StatusBarWidthTransitionState(
-        appliedTier: .standard
-    )
-    private var titleWidthConstraint: NSLayoutConstraint?
-    private var pendingTitleWidthShrinkTask: Task<Void, Never>?
+    private var displayedSnapshot: StatusBarDisplaySnapshot?
 
     init(viewModel: MenuBarViewModel) {
         self.viewModel = viewModel
@@ -648,7 +148,6 @@ final class StatusBarController: NSObject, NSWindowDelegate, NSMenuDelegate {
     }
 
     deinit {
-        pendingTitleWidthShrinkTask?.cancel()
         NSWorkspace.shared.notificationCenter.removeObserver(self)
     }
 
@@ -657,45 +156,11 @@ final class StatusBarController: NSObject, NSWindowDelegate, NSMenuDelegate {
         button.target = self
         button.action = #selector(handleStatusItemClick(_:))
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-        button.image = nil
-        button.title = ""
-        button.attributedTitle = NSAttributedString()
-
-        statusStackView.orientation = .horizontal
-        statusStackView.alignment = .centerY
-        statusStackView.spacing = StatusBarWidthMetrics.iconTitleSpacing
-        statusStackView.translatesAutoresizingMaskIntoConstraints = false
-
-        statusIconView.translatesAutoresizingMaskIntoConstraints = false
-
-        statusTitleView.translatesAutoresizingMaskIntoConstraints = false
-
-        statusStackView.addArrangedSubview(statusIconView)
-        statusStackView.addArrangedSubview(statusTitleView)
-        button.addSubview(statusStackView)
-
-        let titleWidthConstraint = statusTitleView.widthAnchor.constraint(
-            equalToConstant: StatusBarWidthMetrics.titleWidth(for: .standard)
-        )
-        self.titleWidthConstraint = titleWidthConstraint
-        statusItem.length = StatusBarWidthMetrics.statusItemLength(for: .standard)
-
-        NSLayoutConstraint.activate([
-            statusIconView.widthAnchor.constraint(equalToConstant: StatusBarWidthMetrics.iconWidth),
-            statusIconView.heightAnchor.constraint(equalToConstant: StatusItemLayout.height),
-            titleWidthConstraint,
-            statusTitleView.heightAnchor.constraint(equalToConstant: StatusItemLayout.height),
-            statusStackView.centerXAnchor.constraint(equalTo: button.centerXAnchor),
-            statusStackView.centerYAnchor.constraint(equalTo: button.centerYAnchor),
-            statusStackView.leadingAnchor.constraint(
-                greaterThanOrEqualTo: button.leadingAnchor,
-                constant: StatusBarWidthMetrics.horizontalInset
-            ),
-            statusStackView.trailingAnchor.constraint(
-                lessThanOrEqualTo: button.trailingAnchor,
-                constant: -StatusBarWidthMetrics.horizontalInset
-            )
-        ])
+        button.imagePosition = .imageLeading
+        button.imageScaling = .scaleProportionallyDown
+        // Keep the status button's native content tree. Layer-backed text
+        // subviews can invalidate status-item snapshots while being drawn.
+        // The variable-length item lets AppKit include its own content insets.
     }
 
     private func bindViewModel() {
@@ -721,110 +186,54 @@ final class StatusBarController: NSObject, NSWindowDelegate, NSMenuDelegate {
         }
     }
 
-    private func updateStatusItem(forceImmediate: Bool = false) {
-        let presentation = viewModel.menuBarPresentation
-        let headerPresentation = viewModel.statusMenuHeaderPresentation
+    private func updateStatusItem(forceRefresh: Bool = false) {
         if isContextMenuOpen {
             updateContextMenu()
         }
-        let snapshot = StatusBarTransitionSnapshot(
+        guard let button = statusItem.button else { return }
+        let presentation = viewModel.menuBarPresentation
+        let headerPresentation = viewModel.statusMenuHeaderPresentation
+        let snapshot = StatusBarDisplaySnapshot(
             title: presentation.title,
-            iconTransitionIdentity: presentation.iconTransitionIdentity,
-            titleGroup: presentation.titleTransitionGroup,
-            titleWidthTier: presentation.titleWidthTier,
             titleFontStyle: presentation.titleFontStyle,
             accessibilityLabel: presentation.accessibilityLabel,
             ringFraction: headerPresentation.fraction,
             ringTone: headerPresentation.tone
         )
-        guard StatusBarTransitionPolicy.shouldApply(
-            previous: transitionState.snapshot,
-            next: snapshot,
-            forceImmediate: forceImmediate
-        ) else {
-            return
-        }
-        let previous = transitionState.snapshot
-        if previous?.accessibilityLabel != snapshot.accessibilityLabel {
-            statusItem.button?.setAccessibilityLabel(snapshot.accessibilityLabel)
-        }
-        let reduceMotion = forceImmediate
-            || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        let transition = transitionState.transition(
-            to: snapshot,
-            reduceMotion: reduceMotion
-        )
-        pendingTitleWidthShrinkTask?.cancel()
-        pendingTitleWidthShrinkTask = nil
-        let widthTransition = widthTransitionState.transition(
-            to: presentation.titleWidthTier,
-            titleTransition: transition.title,
-            reduceMotion: reduceMotion
-        )
-        applyWidthTransition(widthTransition)
+        guard forceRefresh || displayedSnapshot != snapshot else { return }
+        let previous = displayedSnapshot
 
-        if forceImmediate || previous?.iconTransitionIdentity != snapshot.iconTransitionIdentity
-            || previous?.ringFraction != snapshot.ringFraction
+        if forceRefresh || previous?.ringFraction != snapshot.ringFraction
             || previous?.ringTone != snapshot.ringTone {
-            let image = RenewalRingArtwork.make(
-                fraction: headerPresentation.fraction,
-                tone: ringTone(for: headerPresentation.tone),
-                diameter: StatusBarWidthMetrics.iconWidth,
+            button.image = RenewalRingArtwork.make(
+                fraction: snapshot.ringFraction,
+                tone: ringTone(for: snapshot.ringTone),
+                diameter: StatusItemLayout.iconDiameter,
                 lineWidth: 1.6,
                 isTemplate: true
             )
-            statusIconView.display(image: image, transition: transition.icon)
         }
-        statusIconView.updateAccessibilityLabel(snapshot.accessibilityLabel)
-        if forceImmediate || previous?.title != snapshot.title
+        if forceRefresh || previous?.title != snapshot.title
             || previous?.titleFontStyle != snapshot.titleFontStyle {
-            statusTitleView.display(
-                title: presentation.title,
-                font: StatusBarTitleFontProvider.font(for: presentation.titleFontStyle),
-                transition: transition.title
+            button.attributedTitle = NSAttributedString(
+                string: snapshot.title,
+                attributes: [
+                    .font: StatusBarTitleFontProvider.font(for: snapshot.titleFontStyle)
+                ]
             )
         }
-    }
-
-    private func applyWidthTransition(_ transition: StatusBarWidthTransition) {
-        switch transition {
-        case .unchanged:
-            break
-        case let .applyImmediately(tier):
-            applyWidthTier(tier)
-        case let .shrinkAfterTransition(tier, delay, generation):
-            pendingTitleWidthShrinkTask = Task { @MainActor [weak self] in
-                do {
-                    try await Task.sleep(for: .seconds(delay))
-                } catch {
-                    return
-                }
-                guard let self,
-                      self.widthTransitionState.completeDelayedShrink(
-                        to: tier,
-                        generation: generation
-                      ) else {
-                    return
-                }
-                self.applyWidthTier(tier)
-                self.pendingTitleWidthShrinkTask = nil
-            }
+        if previous?.accessibilityLabel != snapshot.accessibilityLabel {
+            button.setAccessibilityLabel(snapshot.accessibilityLabel)
         }
-    }
-
-    private func applyWidthTier(_ tier: MenuBarTitleWidthTier) {
-        statusTitleView.isHidden = false
-        statusStackView.spacing = StatusBarWidthMetrics.iconTitleSpacing
-        titleWidthConstraint?.constant = StatusBarWidthMetrics.titleWidth(for: tier)
-        statusItem.length = StatusBarWidthMetrics.statusItemLength(for: tier)
-        statusItem.button?.layoutSubtreeIfNeeded()
+        if button.image?.accessibilityDescription != snapshot.accessibilityLabel {
+            button.image?.accessibilityDescription = snapshot.accessibilityLabel
+        }
+        displayedSnapshot = snapshot
     }
 
     @objc
     private func handleAccessibilityDisplayOptionsDidChange(_ notification: Notification) {
-        statusTitleView.finishImmediately()
-        statusIconView.finishImmediately()
-        updateStatusItem(forceImmediate: true)
+        updateStatusItem(forceRefresh: true)
     }
 
     @objc
